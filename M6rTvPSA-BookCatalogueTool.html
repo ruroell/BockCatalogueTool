@@ -1,0 +1,1837 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Book Catalogue Editor</title>
+    <!-- Tailwind CSS -->
+    <script src="vendor/tailwind-play.js"></script>
+    <script>if (!window.tailwind) document.write('<script src="https://cdn.tailwindcss.com"><\/script>');</script>
+    <!-- PapaParse für CSV -->
+    <script src="vendor/papaparse.min.js"></script>
+    <script>if (!window.Papa) document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"><\/script>');</script>
+    <!-- js-untar zum Entpacken der TAR/BCBK-Datei -->
+    <script src="vendor/untar.js"></script>
+    <script>if (!window.untar) document.write('<script src="https://cdn.jsdelivr.net/npm/js-untar@1.0.2/build/dist/untar.js"><\/script>');</script>
+</head>
+<body class="bg-gray-100 min-h-screen text-gray-800">
+
+    <!-- Fluid Container -->
+    <div class="w-[98%] mx-auto px-2 py-8">
+        <header class="mb-6 text-center">
+            <h1 class="text-3xl font-bold text-blue-600">Book Catalogue Editor</h1>
+            <p class="text-gray-600 mt-2">Lade dein Backup hoch, editiere Metadaten/Cover und speichere es modifiziert ab.</p>
+        </header>
+
+        <!-- Upload Bereich -->
+        <div id="upload-section" role="button" tabindex="0" aria-label="Archiv-Datei (.tar oder .bcbk) auswählen oder hierher ziehen" class="bg-white rounded-xl shadow-md p-8 text-center border-2 border-dashed border-gray-300 hover:border-blue-500 transition cursor-pointer max-w-4xl mx-auto focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <input type="file" id="tar-file-input" accept=".tar,.bcbk" class="hidden">
+            <div onclick="document.getElementById('tar-file-input').click()">
+                <svg class="mx-auto h-12 w-12 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                </svg>
+                <p class="text-lg font-medium">Klicke hier oder ziehe deine <span class="text-blue-600">.tar- oder .bcbk-Datei</span> hierher</p>
+                <p class="text-sm text-gray-500 mt-1">Die Datei wird lokal im Browser verarbeitet (vollständig privat).</p>
+            </div>
+        </div>
+
+        <!-- Haupt-App -->
+        <div id="app-section" class="hidden space-y-6">
+
+            <!-- STICKY HEADER mit Filtern & Aktionen -->
+            <div class="sticky top-0 z-30 bg-gray-100/95 backdrop-blur-sm py-3 shadow-sm">
+                <div class="bg-white rounded-xl shadow-md p-4 flex flex-wrap items-center justify-between gap-4">
+                    <div class="flex items-center gap-3 flex-wrap flex-1">
+                        <!-- Buch hinzufügen Button -->
+                        <button id="open-add-modal-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded-lg shadow transition flex items-center gap-2">
+                            <span>+ Neues Buch / Batch</span>
+                        </button>
+
+                        <input type="text" id="search-input" placeholder="Suche (Titel, Autor...)" class="px-3 py-2 border rounded-lg w-full sm:w-48 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+
+                        <!-- Serien Dropdown Filter + Stepper -->
+                        <div class="flex items-center gap-1">
+                            <button id="series-prev-btn" type="button" aria-label="Vorherige Serie" title="Vorherige Serie" class="px-2 py-2 border rounded-lg bg-white hover:bg-gray-50 text-xs">&#9664;</button>
+                            <select id="series-filter-select" class="px-3 py-2 border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm max-w-xs">
+                                <option value="">-- Alle Serien --</option>
+                            </select>
+                            <button id="series-next-btn" type="button" aria-label="Nächste Serie" title="Nächste Serie" class="px-2 py-2 border rounded-lg bg-white hover:bg-gray-50 text-xs">&#9654;</button>
+                        </div>
+
+                        <input type="text" id="tag-filter-input" placeholder="Regal-Filter..." class="px-3 py-2 border rounded-lg w-full sm:w-36 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+
+                        <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none bg-gray-50 px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-100">
+                            <input type="checkbox" id="no-cover-filter" class="rounded w-4 h-4 text-blue-600 focus:ring-blue-500">
+                            <span class="font-medium text-xs">Nur ohne Cover</span>
+                        </label>
+
+                        <!-- RESET FILTER BUTTON -->
+                        <button id="reset-filters-btn" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-2 rounded-lg text-xs font-medium transition flex items-center gap-1">
+                            <span>Filter zurücksetzen</span>
+                        </button>
+
+                        <div class="flex items-center gap-1.5 text-xs text-gray-600 ml-auto">
+                            <span>Zeige:</span>
+                            <select id="items-per-page-select" class="px-2 py-1.5 border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="20">20</option>
+                                <option value="50" selected>50</option>
+                                <option value="100">100</option>
+                                <option value="500">500</option>
+                            </select>
+                            <span class="ml-2">Sortierung:</span>
+                            <select id="sort-select" class="px-2 py-1.5 border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="default" selected>Standard (Serie/Titel)</option>
+                                <option value="newest">Neueste zuerst</option>
+                                <option value="oldest">Älteste zuerst</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <button id="export-btn" class="bg-green-600 hover:bg-green-700 text-white font-medium px-5 py-2 rounded-lg shadow transition flex items-center gap-2">
+                            <span>Archiv herunterladen</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- BATCH EDITING TOOLBAR -->
+                <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 mt-2 flex flex-wrap items-center justify-between gap-3 text-sm">
+                    <div class="flex items-center gap-3 flex-wrap">
+                        <span class="font-semibold text-blue-800">Massenbearbeitung:</span>
+                        <span id="selected-count-badge" class="bg-blue-200 text-blue-900 px-2.5 py-0.5 rounded-full font-medium">0 ausgewählt</span>
+
+                        <select id="batch-field-select" class="px-3 py-1.5 border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="bookshelf">Bücherregal (Bookshelf)</option>
+                            <option value="author">Autor (Author)</option>
+                            <option value="series_details">Serie mit Startnummer</option>
+                        </select>
+
+                        <input type="text" id="batch-value-input" placeholder="Neuer Wert..." class="px-3 py-1.5 border rounded-lg bg-white w-48 focus:outline-none focus:ring-2 focus:ring-blue-500">
+
+                        <div id="batch-start-num-wrapper" class="flex items-center gap-1.5 hidden">
+                            <span class="text-xs text-gray-600 font-medium">Start-Nr:</span>
+                            <input type="number" id="batch-start-num" value="1" min="1" class="px-2 py-1.5 border rounded-lg bg-white w-16 text-center focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+
+                        <button id="apply-batch-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg shadow transition font-medium disabled:opacity-50" disabled>
+                            Anwenden
+                        </button>
+                    </div>
+                    <div>
+                        <button id="select-all-filtered-btn" class="text-blue-600 hover:underline font-medium text-xs">Alle gefilterten auswählen</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pagination Top -->
+            <div class="flex justify-between items-center bg-white px-4 py-3 rounded-xl shadow-sm text-sm text-gray-600">
+                <span id="pagination-info-top">Lade...</span>
+                <div class="flex gap-2">
+                    <button id="prev-page-btn" class="px-3 py-1.5 border rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50">Vorherige</button>
+                    <span id="page-indicator" class="px-3 py-1.5 font-medium">Seite 1 von 1</span>
+                    <button id="next-page-btn" class="px-3 py-1.5 border rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50">Nächste</button>
+                </div>
+            </div>
+
+            <!-- Bücher Tabelle -->
+            <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse table-auto">
+                        <thead>
+                            <tr class="bg-gray-50 border-b text-gray-600 text-sm">
+                                <th class="p-4 w-12 text-center">
+                                    <input type="checkbox" id="select-page-checkbox" class="rounded w-4 h-4 text-blue-600 cursor-pointer">
+                                </th>
+                                <th class="p-4 w-20">Cover</th>
+                                <th class="p-4 w-2/5">Titel, Autor & Serie</th>
+                                <th class="p-4 w-1/4">Bücherregale</th>
+                                <th class="p-4 w-36">ISBN</th>
+                                <th class="p-4 w-36 text-center">Aktionen</th>
+                            </tr>
+                        </thead>
+                        <tbody id="books-table-body" class="divide-y divide-gray-200"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Pagination Bottom -->
+            <div class="flex justify-between items-center bg-white px-4 py-3 rounded-xl shadow-sm text-sm text-gray-600 mb-12">
+                <span id="pagination-info-bottom">Lade...</span>
+                <div class="flex gap-2">
+                    <button id="prev-page-btn-bottom" class="px-3 py-1.5 border rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50">Vorherige</button>
+                    <span id="page-indicator-bottom" class="px-3 py-1.5 font-medium">Seite 1 von 1</span>
+                    <button id="next-page-btn-bottom" class="px-3 py-1.5 border rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50">Nächste</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 1: COVER LIGHTBOX -->
+    <div id="cover-modal" class="fixed inset-0 z-50 bg-black/70 flex items-center justify-center hidden p-4">
+        <div class="bg-white p-6 rounded-2xl shadow-2xl max-w-md w-full flex flex-col items-center relative">
+            <button aria-label="Schließen" class="close-modal-btn absolute top-3 right-3 text-gray-400 hover:text-gray-700 text-2xl font-bold px-2">&times;</button>
+            <img id="modal-cover-img" src="" class="max-h-[65vh] object-contain rounded-lg shadow-md mb-4 border" alt="Cover Vorschau">
+            <h3 id="modal-cover-title" class="text-base font-bold text-center text-gray-800 mb-4"></h3>
+            <button id="modal-delete-cover-btn" class="bg-red-500 hover:bg-red-600 text-white font-medium px-4 py-2 rounded-lg shadow transition text-sm">
+                Cover löschen
+            </button>
+        </div>
+    </div>
+
+    <!-- MODAL 2: NEUES BUCH / BATCH-ISBN HINZUFÜGEN -->
+    <div id="add-book-modal" class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center hidden p-4">
+        <div class="bg-white p-6 rounded-2xl shadow-2xl max-w-lg w-full relative space-y-4">
+            <button aria-label="Schließen" class="close-modal-btn absolute top-3 right-3 text-gray-400 hover:text-gray-700 text-2xl font-bold px-2">&times;</button>
+            <h2 class="text-xl font-bold text-gray-800 border-b pb-2">Neues Buch / Batch-ISBNs hinzufügen</h2>
+
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 uppercase mb-1">ISBN(s) eingeben (Einzeln oder mehrere zeilenweise)</label>
+                    <textarea id="add-isbn-input" rows="4" placeholder="z.B.&#10;978-3-8420-1234-5&#10;9783842056789" class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-mono"></textarea>
+                    <p class="text-xs text-gray-500 mt-1">Bindestriche werden automatisch entfernt. Mehrere ISBNs werden nacheinander verarbeitet.</p>
+                </div>
+
+                <div class="flex justify-end gap-2 pt-2">
+                    <button id="fetch-isbn-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg font-medium text-sm transition">
+                        ISBN(s) verarbeiten
+                    </button>
+                </div>
+            </div>
+
+            <!-- Vorschau für Einzel-Google-Daten -->
+            <div id="google-preview-box" class="hidden border rounded-xl p-4 bg-gray-50 space-y-3 mt-3">
+                <h3 class="font-semibold text-sm text-gray-700">Gefundene Google-Books Daten:</h3>
+                <div class="flex gap-4">
+                    <img id="google-preview-img" src="" class="w-16 h-24 object-cover rounded shadow border" alt="Google Cover">
+                    <div class="text-xs space-y-1">
+                        <p><span class="font-bold">Titel:</span> <span id="google-preview-title"></span></p>
+                        <p><span class="font-bold">Autor:</span> <span id="google-preview-author"></span></p>
+                        <p><span class="font-bold">Verlag:</span> <span id="google-preview-publisher"></span></p>
+                        <p><span class="font-bold">Quellen:</span> <span id="google-preview-source"></span></p>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2 pt-2 border-t">
+                    <button id="reject-google-btn" class="px-3 py-1.5 border rounded-lg text-xs hover:bg-gray-200">Manuell ausfüllen</button>
+                    <button id="accept-google-btn" class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-medium">Google-Daten übernehmen</button>
+                </div>
+            </div>
+
+            <!-- Batch Review Queue -->
+            <div id="batch-queue-box" class="hidden border rounded-xl p-4 bg-gray-50 space-y-3 mt-3">
+                <div class="flex justify-between items-center gap-2 flex-wrap">
+                    <h3 class="font-semibold text-sm text-gray-700">Batch-Review (<span id="batch-queue-pos">1</span>/<span id="batch-queue-total">0</span>)</h3>
+                    <div class="flex gap-2">
+                        <button id="batch-accept-all-btn" type="button" class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-medium">Alle hinzufügen</button>
+                        <button id="batch-cancel-btn" type="button" class="px-3 py-1.5 border rounded-lg text-xs hover:bg-gray-200">Abbrechen</button>
+                    </div>
+                </div>
+                <div class="flex gap-4">
+                    <img id="batch-queue-img" src="" class="w-16 h-24 object-cover rounded shadow border hidden" alt="Cover">
+                    <div class="text-xs space-y-1 flex-1">
+                        <p><span class="font-bold">ISBN:</span> <span id="batch-queue-isbn"></span></p>
+                        <p><span class="font-bold">Titel:</span> <span id="batch-queue-title"></span></p>
+                        <p><span class="font-bold">Autor:</span> <span id="batch-queue-author"></span></p>
+                        <p><span class="font-bold">Verlag:</span> <span id="batch-queue-publisher"></span></p>
+                        <p><span class="font-bold">Quellen:</span> <span id="batch-queue-sources"></span></p>
+                        <p id="batch-queue-dup" class="text-red-600 font-medium hidden">Bereits vorhanden (Duplikat)</p>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2 pt-2 border-t">
+                    <button id="batch-skip-btn" type="button" class="px-3 py-1.5 border rounded-lg text-xs hover:bg-gray-200">Überspringen</button>
+                    <button id="batch-edit-btn" type="button" class="px-3 py-1.5 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-xs font-medium">Übernehmen &amp; bearbeiten</button>
+                    <button id="batch-accept-btn" type="button" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium">Übernehmen &amp; weiter</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 3: COVER SUCH-OVERLAY -->
+    <div id="cover-search-modal" class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center hidden p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] flex flex-col relative">
+            <div class="p-4 border-b flex justify-between items-center bg-gray-50 rounded-t-2xl">
+                <h2 class="text-lg font-bold text-gray-800" id="cover-search-modal-title">Cover online suchen</h2>
+                <button aria-label="Schließen" class="close-modal-btn text-gray-400 hover:text-gray-700 text-2xl font-bold px-2">&times;</button>
+            </div>
+
+            <div class="p-4 bg-gray-100 border-b flex gap-2">
+                <input type="text" id="cover-search-term-input" placeholder="Suchbegriff (Titel, Autor, ISBN)..." class="flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm">
+                <button id="exec-cover-search-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium">Suchen</button>
+            </div>
+
+            <div class="p-4 overflow-y-auto flex-1" id="cover-search-results-container">
+                <p class="text-gray-500 text-sm text-center py-8">Suche läuft...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 4: VOLLSTÄNDIGES DETAILS-OVERLAY -->
+    <div id="details-modal" class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center hidden p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col relative">
+            <div class="p-5 border-b flex justify-between items-center bg-gray-50 rounded-t-2xl">
+                <h2 class="text-lg font-bold text-gray-800" id="details-modal-title">Buch-Details bearbeiten</h2>
+                <button aria-label="Schließen" class="close-modal-btn text-gray-400 hover:text-gray-700 text-2xl font-bold px-2">&times;</button>
+            </div>
+
+            <div class="p-6 overflow-y-auto space-y-4 flex-1" id="details-fields-container">
+                <!-- Dynamisch erzeugte Formularfelder -->
+            </div>
+
+            <div class="p-4 border-t bg-gray-50 flex justify-end gap-2 rounded-b-2xl">
+                <button id="save-details-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-medium px-5 py-2 rounded-lg shadow text-sm">
+                    Speichern & Schließen
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <datalist id="series-datalist"></datalist>
+    <datalist id="bookshelf-datalist"></datalist>
+
+    <script>
+        let booksData = [];
+        let csvMeta = { meta: null, originalFields: [] };
+        let thumbnails = {};
+        let thumbnailFilenames = {};
+        let selectedIndices = new Set();
+        let activeModalUuid = null;
+        let activeEditBookIndex = null;
+        let activeCoverSearchUuid = null;
+        let isDataDirty = false;
+        let objectUrls = new Map();
+        let coverKeySet = new Set();
+        let fieldCache = new WeakMap();
+        let bookshelfIdMap = new Map();
+        let pendingCoverOps = 0;
+        let isExporting = false;
+        let sortMode = 'default';
+        let batchQueue = [];
+        let batchQueuePos = 0;
+        let batchAddedCount = 0;
+        let batchQueueImgUrl = null;
+
+        let pendingGoogleData = null;
+
+        let currentPage = 1;
+        let itemsPerPage = 50;
+
+        const fileInput = document.getElementById('tar-file-input');
+        const uploadSection = document.getElementById('upload-section');
+        const appSection = document.getElementById('app-section');
+        const tableBody = document.getElementById('books-table-body');
+        const searchInput = document.getElementById('search-input');
+        const seriesFilterSelect = document.getElementById('series-filter-select');
+        const tagFilterInput = document.getElementById('tag-filter-input');
+        const noCoverFilterCheckbox = document.getElementById('no-cover-filter');
+        const resetFiltersBtn = document.getElementById('reset-filters-btn');
+        const exportBtn = document.getElementById('export-btn');
+        const itemsPerPageSelect = document.getElementById('items-per-page-select');
+
+        const selectPageCheckbox = document.getElementById('select-page-checkbox');
+        const selectedCountBadge = document.getElementById('selected-count-badge');
+        const batchFieldSelect = document.getElementById('batch-field-select');
+        const batchValueInput = document.getElementById('batch-value-input');
+        const batchStartNumWrapper = document.getElementById('batch-start-num-wrapper');
+        const batchStartNumInput = document.getElementById('batch-start-num');
+        const applyBatchBtn = document.getElementById('apply-batch-btn');
+        const selectAllFilteredBtn = document.getElementById('select-all-filtered-btn');
+
+        // Modals
+        const coverModal = document.getElementById('cover-modal');
+        const modalImg = document.getElementById('modal-cover-img');
+        const modalTitle = document.getElementById('modal-cover-title');
+        const modalDeleteCoverBtn = document.getElementById('modal-delete-cover-btn');
+
+        const addBookModal = document.getElementById('add-book-modal');
+        const openAddModalBtn = document.getElementById('open-add-modal-btn');
+        const addIsbnInput = document.getElementById('add-isbn-input');
+        const fetchIsbnBtn = document.getElementById('fetch-isbn-btn');
+        const googlePreviewBox = document.getElementById('google-preview-box');
+
+        const coverSearchModal = document.getElementById('cover-search-modal');
+        const coverSearchTermInput = document.getElementById('cover-search-term-input');
+        const execCoverSearchBtn = document.getElementById('exec-cover-search-btn');
+        const coverSearchResultsContainer = document.getElementById('cover-search-results-container');
+
+        const detailsModal = document.getElementById('details-modal');
+        const detailsFieldsContainer = document.getElementById('details-fields-container');
+        const saveDetailsBtn = document.getElementById('save-details-btn');
+
+        const prevBtnTop = document.getElementById('prev-page-btn');
+        const nextBtnTop = document.getElementById('next-page-btn');
+        const pageIndicatorTop = document.getElementById('page-indicator');
+        const infoTop = document.getElementById('pagination-info-top');
+
+        const prevBtnBot = document.getElementById('prev-page-btn-bottom');
+        const nextBtnBot = document.getElementById('next-page-btn-bottom');
+        const pageIndicatorBot = document.getElementById('page-indicator-bottom');
+        const infoBot = document.getElementById('pagination-info-bottom');
+
+        const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+        const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+        const debouncedSeriesRefresh = debounce(() => populateSeriesDropdown(), 300);
+
+        const PLACEHOLDER_COVER = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="60" height="80"><rect width="60" height="80" fill="#e5e7eb"/><text x="30" y="44" font-size="9" text-anchor="middle" fill="#6b7280">Kein Bild</text></svg>');
+
+        function newUuid() {
+            let u;
+            if (self.crypto && self.crypto.randomUUID) u = self.crypto.randomUUID();
+            else u = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); });
+            return u.replace(/-/g, '');
+        }
+
+        function nextBookId() {
+            let max = 0;
+            for (const b of booksData) {
+                const v = parseInt(getBookField(b, ['_id', 'id']).value, 10);
+                if (!isNaN(v) && v > max) max = v;
+            }
+            return String(max + 1);
+        }
+
+        function nowStamp() {
+            const d = new Date();
+            const p = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+        }
+
+        function normDate(v) {
+            v = String(v || '').trim();
+            if (!v) return '';
+            let m = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+            if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+            m = v.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+            if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+            m = v.match(/^(\d{4})-(\d{1,2})$/);
+            if (m) return `${m[1]}-${m[2].padStart(2, '0')}-01`;
+            m = v.match(/^(\d{4})$/);
+            if (m) return `${m[1]}-01-01`;
+            return v;
+        }
+
+        function normDateTime(v) {
+            v = String(v || '').trim();
+            if (!v) return '';
+            const p = n => String(n || 0).padStart(2, '0');
+            let m = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+            if (m) return `${m[1]}-${p(m[2])}-${p(m[3])} ${p(m[4])}:${p(m[5])}:${p(m[6])}`;
+            m = v.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+            if (m) return `${m[3]}-${p(m[2])}-${p(m[1])} ${p(m[4])}:${p(m[5])}:${p(m[6])}`;
+            return v;
+        }
+
+        function normPrice(v) { return String(v || '').trim().replace(',', '.'); }
+
+        function normAuthor(authors) {
+            if (!Array.isArray(authors)) authors = String(authors || '').split(/[,;]/);
+            return authors.map(a => {
+                a = String(a || '').trim();
+                if (!a) return '';
+                if (a.includes(',')) return a;
+                const parts = a.split(/\s+/);
+                if (parts.length >= 2) return `${parts[parts.length - 1]}, ${parts.slice(0, -1).join(' ')}`;
+                return a;
+            }).filter(Boolean).join('|');
+        }
+
+        async function blobKind(blob) {
+            const buf = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+            if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'jpg';
+            if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'png';
+            if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'gif';
+            if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'webp';
+            if (buf[0] === 0x42 && buf[1] === 0x4D) return 'bmp';
+            return 'bin';
+        }
+
+        async function toJpegBlob(blob) {
+            const url = URL.createObjectURL(blob);
+            try {
+                const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+                const c = document.createElement('canvas');
+                c.width = img.naturalWidth; c.height = img.naturalHeight;
+                const ctx = c.getContext('2d');
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, c.width, c.height);
+                ctx.drawImage(img, 0, 0);
+                return await new Promise(res => c.toBlob(b => res(b), 'image/jpeg', 0.9));
+            } finally { URL.revokeObjectURL(url); }
+        }
+
+        async function storeCover(uuid, file) {
+            if (!file || !file.size) return null;
+            const kind = await blobKind(file);
+            if (kind === 'jpg') { thumbnails[uuid] = file; return uuid + '.jpg'; }
+            try {
+                const jpeg = await toJpegBlob(file);
+                if (jpeg && jpeg.size > 0) { thumbnails[uuid] = jpeg; return uuid + '.jpg'; }
+            } catch (e) {}
+            if (kind === 'bin') return null;
+            const ext = (file.name && file.name.includes('.')) ? file.name.substring(file.name.lastIndexOf('.')) : '.' + kind;
+            thumbnails[uuid] = file;
+            return uuid + ext;
+        }
+
+        function refreshCoverSet() { coverKeySet = new Set(Object.keys(thumbnails)); }
+
+        function hasCover(uuid) {
+            if (!uuid) return false;
+            if (coverKeySet.has(uuid)) return true;
+            for (const k of coverKeySet) if (k.startsWith(uuid)) return true;
+            return false;
+        }
+
+        function getCoverUrl(uuid) {
+            if (!uuid) return null;
+            if (objectUrls.has(uuid)) return objectUrls.get(uuid);
+            let blob = thumbnails[uuid];
+            if (!blob) { const k = Object.keys(thumbnails).find(k => k.startsWith(uuid)); if (k) blob = thumbnails[k]; }
+            if (!blob) return null;
+            const url = URL.createObjectURL(blob);
+            objectUrls.set(uuid, url);
+            return url;
+        }
+
+        function buildBookshelfIdMap() {
+            bookshelfIdMap = new Map();
+            const counts = new Map();
+            for (const b of booksData) {
+                const ids = String(getBookField(b, ['bookshelf_id']).value || '').split(',').map(s => s.trim()).filter(Boolean);
+                const names = String(getBookField(b, ['bookshelf', 'tags', 'TAGS']).value || '').split(',').map(s => s.trim());
+                names.forEach((n, i) => {
+                    if (!n || !ids[i]) return;
+                    if (!counts.has(n)) counts.set(n, new Map());
+                    const m = counts.get(n);
+                    m.set(ids[i], (m.get(ids[i]) || 0) + 1);
+                });
+            }
+            for (const [name, m] of counts) {
+                let best = '', bc = 0;
+                for (const [id, c] of m) if (c > bc) { bc = c; best = id; }
+                bookshelfIdMap.set(name, best);
+            }
+            populateBookshelfDatalist();
+        }
+
+        function populateBookshelfDatalist() {
+            const dl = document.getElementById('bookshelf-datalist');
+            if (!dl) return;
+            dl.innerHTML = '';
+            Array.from(bookshelfIdMap.keys()).sort(collator.compare).forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = n;
+                dl.appendChild(opt);
+            });
+        }
+
+        function defaultBookshelf() { return { name: 'Default', id: bookshelfIdMap.get('Default') || '1' }; }
+
+        function touchBook(g) {
+            const b = booksData[g];
+            if (!b) return;
+            const k = getBookField(b, ['last_update_date']).key;
+            if (Object.prototype.hasOwnProperty.call(b, k)) b[k] = nowStamp();
+        }
+
+        function setIfOwn(obj, key, val) { if (key && Object.prototype.hasOwnProperty.call(obj, key)) obj[key] = val; }
+
+        const DNB_LANG_MAP = { ger: 'de', eng: 'en', fre: 'fr', spa: 'es', ita: 'it', dut: 'nl', por: 'pt', lat: 'la' };
+
+        function xmlUnescape(s) {
+            return String(s || '')
+                .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+                .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+                .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+        }
+
+        async function fetchGoogle(isbn) {
+            const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+            const data = await res.json();
+            if (!data.totalItems || !data.items || !data.items[0].volumeInfo) return null;
+            const info = data.items[0].volumeInfo;
+            let coverUrl = null;
+            if (info.imageLinks) {
+                coverUrl = info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || null;
+                if (coverUrl) coverUrl = coverUrl.replace('http://', 'https://');
+            }
+            const lp = info.saleInfo && info.saleInfo.listPrice && info.saleInfo.listPrice.amount;
+            return {
+                source: 'Google Books',
+                title: info.title || '',
+                author: info.authors ? normAuthor(info.authors) : '',
+                publisher: info.publisher || '',
+                description: info.description || '',
+                publishedDate: info.publishedDate || '',
+                pages: info.pageCount || '',
+                language: info.language || '',
+                listPrice: (lp !== undefined && lp !== null) ? String(lp) : '',
+                coverUrl: coverUrl
+            };
+        }
+
+        async function fetchDnb(isbn) {
+            const url = `https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=${encodeURIComponent('num=' + isbn)}&maximumRecords=1&recordSchema=MARC21-xml`;
+            const res = await fetch(url);
+            const xml = await res.text();
+            const rec = xml.match(/<record[ >][\s\S]*?<\/record>/);
+            if (!rec) return null;
+            const fields = {};
+            const dfRe = /<datafield tag="(\d+)"[^>]*>([\s\S]*?)<\/datafield>/g;
+            let m;
+            while ((m = dfRe.exec(rec[0]))) {
+                if (!fields[m[1]]) fields[m[1]] = [];
+                const sf = {};
+                const sfRe = /<subfield code="([^"]+)"[^>]*>([\s\S]*?)<\/subfield>/g;
+                let sm;
+                while ((sm = sfRe.exec(m[2]))) sf[sm[1]] = xmlUnescape(sm[2]);
+                fields[m[1]].push(sf);
+            }
+            const sf = (tag, code) => { for (const f of (fields[tag] || [])) if (f[code]) return f[code]; return ''; };
+            const sfAll = (tag, code) => { const out = []; for (const f of (fields[tag] || [])) if (f[code]) out.push(f[code]); return out; };
+            const titleA = sf('245', 'a'), titleB = sf('245', 'b');
+            let title = titleA;
+            if (titleB) title = titleA ? `${titleA} : ${titleB}` : titleB;
+            const authors = [...sfAll('100', 'a'), ...sfAll('700', 'a')].map(a => a.replace(/[,.\s]+$/, ''));
+            const pub = (sf('264', 'b') || sf('260', 'b')).replace(/[,;:]\s*$/, '').trim();
+            const ym = (sf('264', 'c') || sf('260', 'c')).match(/\d{4}/);
+            const pm = sf('300', 'a').match(/\d+/);
+            let lang = sf('041', 'a');
+            lang = DNB_LANG_MAP[lang] || lang;
+            if (!title && !authors.length) return null;
+            return {
+                source: 'DNB SRU',
+                title: title,
+                author: normAuthor(authors),
+                publisher: pub,
+                description: sf('520', 'a'),
+                publishedDate: ym ? ym[0] : '',
+                pages: pm ? pm[0] : '',
+                language: lang,
+                listPrice: '',
+                coverUrl: null
+            };
+        }
+
+        async function fetchLobid(isbn) {
+            const res = await fetch(`https://lobid.org/resources/search?q=${encodeURIComponent('isbn:' + isbn)}&format=json`);
+            const data = await res.json();
+            const docs = data.member || data.docs || (Array.isArray(data) ? data : []);
+            const doc = docs[0];
+            if (!doc) return null;
+            const label = v => Array.isArray(v) ? (v[0] && v[0].label ? v[0].label : v[0]) || '' : (v && v.label ? v.label : v) || '';
+            const pubs = Array.isArray(doc.publication) ? doc.publication : (doc.publication ? [doc.publication] : []);
+            const pub = pubs[0] || {};
+            const authors = (doc.contribution || []).map(c => (c.agent && c.agent.label) || c.label || '').filter(Boolean);
+            const ym = String(pub.published || doc.datePublished || '').match(/\d{4}/);
+            return {
+                source: 'lobid',
+                title: doc.title || '',
+                author: normAuthor(authors),
+                publisher: typeof pub.publisher === 'string' ? pub.publisher : label(pub.publisher),
+                description: typeof doc.description === 'string' ? doc.description : label(doc.description),
+                publishedDate: ym ? ym[0] : '',
+                pages: doc.numberOfPages ? String(doc.numberOfPages) : '',
+                language: label(doc.language),
+                listPrice: '',
+                coverUrl: null
+            };
+        }
+
+        async function fetchOpenLibrary(isbn) {
+            const res = await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent('isbn:' + isbn)}&limit=5`);
+            const data = await res.json();
+            const doc = (data.docs || [])[0];
+            if (!doc) return null;
+            let lang = Array.isArray(doc.language) ? doc.language[0] : doc.language;
+            lang = DNB_LANG_MAP[lang] || lang || '';
+            return {
+                source: 'Open Library',
+                title: doc.title || '',
+                author: doc.author_name ? normAuthor(doc.author_name) : '',
+                publisher: Array.isArray(doc.publisher) ? (doc.publisher[0] || '') : (doc.publisher || ''),
+                description: '',
+                publishedDate: doc.first_publish_year ? String(doc.first_publish_year) : '',
+                pages: doc.number_of_pages_median ? String(doc.number_of_pages_median) : '',
+                language: lang,
+                listPrice: '',
+                coverUrl: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg` : null
+            };
+        }
+
+        async function fetchMetadataMulti(isbn) {
+            const results = await Promise.allSettled([fetchGoogle(isbn), fetchDnb(isbn), fetchLobid(isbn), fetchOpenLibrary(isbn)]);
+            let parts = results.map(r => (r.status === 'fulfilled' ? r.value : null)).filter(Boolean);
+            if (!parts.length) return null;
+            if (/^9783/.test(String(isbn).replace(/[^0-9]/g, ''))) {
+                parts = [...parts.filter(p => p.source !== 'Google Books'), ...parts.filter(p => p.source === 'Google Books')];
+            }
+            const pick = (field) => { for (const p of parts) if (p[field]) return p[field]; return ''; };
+            return {
+                isbn: isbn,
+                title: pick('title'),
+                author: pick('author'),
+                publisher: pick('publisher'),
+                description: pick('description'),
+                publishedDate: pick('publishedDate'),
+                pages: pick('pages'),
+                language: pick('language'),
+                listPrice: pick('listPrice'),
+                coverUrl: pick('coverUrl'),
+                sources: parts.map(p => p.source)
+            };
+        }
+
+        function coverOpStart() { pendingCoverOps++; updateExportBtnState(); }
+        function coverOpEnd() { pendingCoverOps = Math.max(0, pendingCoverOps - 1); updateExportBtnState(); }
+        function updateExportBtnState() { exportBtn.disabled = isExporting || pendingCoverOps > 0; }
+
+        function stepSeries(direction) {
+            const opts = Array.from(seriesFilterSelect.options).map(o => o.value).filter(v => v !== '');
+            if (!opts.length) return;
+            let i = opts.indexOf(seriesFilterSelect.value);
+            if (i === -1) i = direction > 0 ? 0 : opts.length - 1;
+            else i = (i + direction + opts.length) % opts.length;
+            seriesFilterSelect.value = opts[i];
+            currentPage = 1;
+            renderTable();
+        }
+
+        function compareByDate(a, b) {
+            const da = String(getBookField(a, ['date_added', 'last_update_date']).value || '');
+            const db = String(getBookField(b, ['date_added', 'last_update_date']).value || '');
+            const c = collator.compare(da, db);
+            if (c !== 0) return sortMode === 'newest' ? -c : c;
+            const tA = String(getBookField(a, ['title', 'TITLE', 'name']).value || '');
+            const tB = String(getBookField(b, ['title', 'TITLE', 'name']).value || '');
+            return collator.compare(tA, tB);
+        }
+
+        function renderBatchQueue() {
+            const box = document.getElementById('batch-queue-box');
+            if (batchQueuePos >= batchQueue.length) {
+                box.classList.add('hidden');
+                addBookModal.classList.add('hidden');
+                populateSeriesDropdown();
+                renderTable();
+                if (batchAddedCount > 0) alert(`Batch abgeschlossen: ${batchAddedCount} neue Bücher hinzugefügt.`);
+                return;
+            }
+            const item = batchQueue[batchQueuePos];
+            box.classList.remove('hidden');
+            document.getElementById('batch-queue-pos').innerText = String(batchQueuePos + 1);
+            document.getElementById('batch-queue-total').innerText = String(batchQueue.length);
+            document.getElementById('batch-queue-isbn').innerText = item.isbn;
+            const m = item.meta || {};
+            document.getElementById('batch-queue-title').innerText = m.title || '(ohne Titel)';
+            document.getElementById('batch-queue-author').innerText = m.author || '–';
+            document.getElementById('batch-queue-publisher').innerText = m.publisher || '–';
+            document.getElementById('batch-queue-sources').innerText = (m.sources && m.sources.length) ? m.sources.join(', ') : '–';
+            const img = document.getElementById('batch-queue-img');
+            if (batchQueueImgUrl) { URL.revokeObjectURL(batchQueueImgUrl); batchQueueImgUrl = null; }
+            if (item.coverBlob) {
+                batchQueueImgUrl = URL.createObjectURL(item.coverBlob);
+                img.src = batchQueueImgUrl;
+                img.classList.remove('hidden');
+            } else {
+                img.classList.add('hidden');
+                img.removeAttribute('src');
+            }
+            document.getElementById('batch-queue-dup').classList.toggle('hidden', !item.isDup);
+            document.getElementById('batch-accept-btn').disabled = item.isDup;
+            document.getElementById('batch-edit-btn').disabled = item.isDup;
+        }
+
+        // Schutz vor versehentlichem Verlassen der Seite (F5 / Tab Schließen)
+        window.addEventListener('beforeunload', (e) => {
+            if (isDataDirty) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+
+        function markDirty() { isDataDirty = true; }
+
+        uploadSection.addEventListener('dragover', (e) => { e.preventDefault(); uploadSection.classList.add('border-blue-500', 'bg-blue-50'); });
+        uploadSection.addEventListener('dragleave', () => { uploadSection.classList.remove('border-blue-500', 'bg-blue-50'); });
+        uploadSection.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadSection.classList.remove('border-blue-500', 'bg-blue-50');
+            if (e.dataTransfer.files.length) handleTarFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) handleTarFile(e.target.files[0]);
+        });
+        uploadSection.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                fileInput.click();
+            }
+        });
+
+        async function handleTarFile(file) {
+            uploadSection.innerHTML = `<p class="text-blue-600 font-medium text-lg">Lese Archiv ein...</p>`;
+            try {
+                const buffer = await file.arrayBuffer();
+                const files = await untar(buffer);
+
+                let csvText = "";
+                thumbnails = {};
+                thumbnailFilenames = {};
+                for (const u of objectUrls.values()) URL.revokeObjectURL(u);
+                objectUrls.clear();
+                fieldCache = new WeakMap();
+                const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp)$/i;
+
+                files.forEach(f => {
+                    const name = f.name.replace(/^\.\//, '');
+                    if (name.endsWith('books.csv')) {
+                        const decoder = new TextDecoder('utf-8');
+                        csvText = decoder.decode(f.buffer);
+                    } else if (f.buffer && IMAGE_EXT.test(name)) {
+                        const uuidMatch = name.match(/([^/]+)$/);
+                        if (uuidMatch) {
+                            const tarFilename = uuidMatch[1];
+                            const baseUuid = tarFilename.replace(/\.[^/.]+$/, "");
+                            thumbnails[baseUuid] = new Blob([f.buffer]);
+                            thumbnailFilenames[baseUuid] = tarFilename;
+                        }
+                    }
+                });
+
+                if (!csvText) {
+                    alert("Keine books.csv im Archiv gefunden!");
+                    location.reload();
+                    return;
+                }
+
+                const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+                booksData = parsed.data;
+                csvMeta.originalFields = parsed.meta.fields || [];
+
+                uploadSection.classList.add('hidden');
+                appSection.classList.remove('hidden');
+                currentPage = 1;
+                selectedIndices.clear();
+                refreshCoverSet();
+                buildBookshelfIdMap();
+                populateSeriesDropdown();
+                renderTable();
+
+            } catch (err) {
+                console.error(err);
+                alert("Fehler beim Lesen des Archivs: " + err.message);
+                location.reload();
+            }
+        }
+
+        function getBookField(book, possibleKeys) {
+            if (!book) return { key: possibleKeys[0] || 'title', value: '' };
+            let m = fieldCache.get(book);
+            if (!m) {
+                m = new Map();
+                for (const k of Object.keys(book)) {
+                    const l = k.toLowerCase();
+                    if (!m.has(l)) m.set(l, k);
+                }
+                fieldCache.set(book, m);
+            }
+            for (let pk of possibleKeys) {
+                const found = m.get(pk.toLowerCase());
+                if (found !== undefined && book[found] !== undefined) {
+                    return { key: found, value: book[found] };
+                }
+            }
+            return { key: possibleKeys[0] || 'title', value: '' };
+        }
+
+        function getSeriesNames() {
+            const seriesSet = new Set();
+            booksData.forEach(book => {
+                const sInfo = getBookField(book, ['series_details', 'series', 'SERIES']);
+                if (sInfo.value) {
+                    const cleanSeriesName = sInfo.value.replace(/\s*\(\d+\)$/, '').trim();
+                    if (cleanSeriesName) seriesSet.add(cleanSeriesName);
+                }
+            });
+            return Array.from(seriesSet).sort(collator.compare);
+        }
+
+        function populateSeriesDatalist() {
+            const dl = document.getElementById('series-datalist');
+            if (!dl) return;
+            dl.innerHTML = '';
+            getSeriesNames().forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s;
+                dl.appendChild(opt);
+            });
+        }
+
+        function populateSeriesDropdown() {
+            const sortedSeries = getSeriesNames();
+            seriesFilterSelect.innerHTML = '<option value="">-- Alle Serien --</option>';
+            sortedSeries.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s;
+                opt.textContent = s;
+                seriesFilterSelect.appendChild(opt);
+            });
+            populateSeriesDatalist();
+        }
+        function getFilteredIndices() {
+            const searchTerm = searchInput.value.toLowerCase();
+            const tagTerm = tagFilterInput.value.toLowerCase();
+            const selectedSeries = seriesFilterSelect.value.toLowerCase();
+            const missingCoverOnly = noCoverFilterCheckbox.checked;
+
+            const result = [];
+            for (let i = 0; i < booksData.length; i++) {
+                const book = booksData[i];
+                const uuid = getBookField(book, ['book_uuid', 'uuid', 'UUID', 'id']).value;
+                const title = (getBookField(book, ['title', 'TITLE', 'name']).value || '').toLowerCase();
+                const author = (getBookField(book, ['author_details', 'author', 'AUTHOR']).value || '').toLowerCase();
+                const tags = (getBookField(book, ['bookshelf', 'tags', 'TAGS']).value || '').toLowerCase();
+                const series = (getBookField(book, ['series_details', 'series', 'SERIES']).value || '').toLowerCase();
+
+                const matchesSearch = title.includes(searchTerm) || author.includes(searchTerm) || series.includes(searchTerm);
+                const matchesTag = !tagTerm || tags.includes(tagTerm);
+                const matchesSeries = !selectedSeries || series.includes(selectedSeries);
+                const matchesNoCover = !missingCoverOnly || !hasCover(uuid);
+
+                if (matchesSearch && matchesTag && matchesSeries && matchesNoCover) result.push(i);
+            }
+
+            if (sortMode === 'default') result.sort((a, b) => compareBooks(booksData[a], booksData[b]));
+            else result.sort((a, b) => compareByDate(booksData[a], booksData[b]));
+            return result;
+        }
+
+        function getFilteredBooks() {
+            return getFilteredIndices().map(i => booksData[i]);
+        }
+
+        function compareBooks(a, b) {
+            const sA = getBookField(a, ['series_details', 'series', 'SERIES']).value || '';
+            const sB = getBookField(b, ['series_details', 'series', 'SERIES']).value || '';
+
+            const matchA = sA.match(/\((\d+)\)/);
+            const matchB = sB.match(/\((\d+)\)/);
+
+            if (matchA && matchB) {
+                const numA = parseInt(matchA[1], 10);
+                const numB = parseInt(matchB[1], 10);
+
+                const nameA = sA.replace(/\s*\(\d+\)$/, '').trim();
+                const nameB = sB.replace(/\s*\(\d+\)$/, '').trim();
+
+                if (collator.compare(nameA, nameB) === 0) {
+                    return numA - numB;
+                }
+            }
+
+            if (sA && sB) {
+                return collator.compare(sA, sB);
+            }
+
+            const tA = getBookField(a, ['title', 'TITLE', 'name']).value || '';
+            const tB = getBookField(b, ['title', 'TITLE', 'name']).value || '';
+            return collator.compare(tA, tB);
+        }
+
+        function renderTable() {
+            const filteredIdx = getFilteredIndices();
+
+            const totalItems = filteredIdx.length;
+            const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
+            if (currentPage > totalPages) currentPage = totalPages;
+            if (currentPage < 1) currentPage = 1;
+
+            const startIndex = (currentPage - 1) * itemsPerPage;
+            const endIndex = Math.min(startIndex + itemsPerPage, totalItems);
+            const pageIdx = filteredIdx.slice(startIndex, endIndex);
+
+            const infoText = totalItems === 0 ? "Keine Bücher gefunden" : `Zeige ${startIndex + 1}–${endIndex} von ${totalItems} Büchern`;
+            infoTop.innerText = infoText;
+            infoBot.innerText = infoText;
+
+            const pageText = `Seite ${currentPage} von ${totalPages}`;
+            pageIndicatorTop.innerText = pageText;
+            pageIndicatorBot.innerText = pageText;
+
+            prevBtnTop.disabled = currentPage <= 1;
+            prevBtnBot.disabled = currentPage <= 1;
+            nextBtnTop.disabled = currentPage >= totalPages;
+            nextBtnBot.disabled = currentPage >= totalPages;
+
+            tableBody.innerHTML = '';
+
+            let allPageSelected = pageIdx.length > 0 && pageIdx.every(g => selectedIndices.has(g));
+            selectPageCheckbox.checked = allPageSelected;
+
+            const pageRows = [];
+
+            pageIdx.forEach((globalIndex) => {
+                const book = booksData[globalIndex];
+                const isSelected = selectedIndices.has(globalIndex);
+
+                const uuid = getBookField(book, ['book_uuid', 'uuid', 'UUID', 'id']).value;
+                const titleInfo = getBookField(book, ['title', 'TITLE', 'name']);
+                const authorInfo = getBookField(book, ['author_details', 'author', 'AUTHOR']);
+                const tagInfo = getBookField(book, ['bookshelf', 'tags', 'TAGS']);
+                const seriesDetailsInfo = getBookField(book, ['series_details', 'series', 'SERIES']);
+                const isbnInfo = getBookField(book, ['isbn', 'ISBN', 'isbn13', 'isbn10']);
+
+                const realCoverUrl = uuid ? getCoverUrl(uuid) : null;
+                const coverUrl = realCoverUrl || PLACEHOLDER_COVER;
+                const hasRealCover = !!realCoverUrl;
+
+                const tr = document.createElement('tr');
+                tr.setAttribute('data-global-index', globalIndex);
+                tr.className = `hover:bg-gray-50 transition border-b ${isSelected ? 'bg-blue-50/60' : ''}`;
+                tr.innerHTML = `
+                    <td class="p-4 text-center">
+                        <input type="checkbox" class="row-checkbox rounded w-4 h-4 text-blue-600 cursor-pointer" data-global-index="${globalIndex}" ${isSelected ? 'checked' : ''}>
+                    </td>
+                    <td class="p-4">
+                        <img src="${coverUrl}" class="w-12 h-16 object-cover rounded shadow border cursor-pointer hover:opacity-80 transition preview-cover-img"
+                            data-cover-url="${coverUrl}" data-book-title="${escapeHtml(titleInfo.value)}" data-uuid="${escapeHtml(uuid)}" data-has-cover="${hasRealCover}" alt="Cover">
+                    </td>
+                    <td class="p-4 space-y-1">
+                        <div class="flex items-center gap-2">
+                            <input type="text" class="font-bold text-gray-900 w-full bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none"
+                                value="${escapeHtml(titleInfo.value)}" data-field-key="${titleInfo.key}" data-global-index="${globalIndex}" placeholder="Titel...">
+                        </div>
+                        <input type="text" class="text-sm text-gray-600 w-full bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none"
+                            value="${escapeHtml(authorInfo.value)}" data-field-key="${authorInfo.key}" data-global-index="${globalIndex}" placeholder="Autor...">
+                        <input type="text" list="series-datalist" class="text-xs text-blue-600 font-medium w-full bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none"
+                            value="${escapeHtml(seriesDetailsInfo.value)}" data-field-key="${seriesDetailsInfo.key}" data-global-index="${globalIndex}" placeholder="Serie (z.B. Gon (1))...">
+                    </td>
+                    <td class="p-4">
+                        <input type="text" list="bookshelf-datalist" class="text-sm text-gray-700 w-full bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none"
+                            value="${escapeHtml(tagInfo.value)}" data-field-key="${tagInfo.key}" data-global-index="${globalIndex}" placeholder="Regale...">
+                    </td>
+                    <td class="p-4">
+                        <input type="text" class="text-xs text-gray-600 font-mono w-full bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none"
+                            value="${escapeHtml(isbnInfo.value)}" data-field-key="${isbnInfo.key}" data-global-index="${globalIndex}" placeholder="ISBN...">
+                    </td>
+                    <td class="p-4 text-center space-y-2">
+                        <button class="open-details-btn text-xs bg-gray-100 hover:bg-gray-200 border text-gray-700 px-2.5 py-1 rounded shadow-sm w-full font-medium" data-global-index="${globalIndex}">
+                            Details
+                        </button>
+                        <div class="drop-zone border border-dashed border-gray-300 rounded p-1 text-[10px] text-gray-500 hover:border-blue-500 cursor-pointer bg-gray-50" data-uuid="${escapeHtml(uuid)}">
+                            Cover ziehen
+                            <input type="file" accept="image/*" class="hidden cover-file-input">
+                        </div>
+                    </td>
+                `;
+
+                pageRows.push(tr);
+            });
+
+            const frag = document.createDocumentFragment();
+            pageRows.forEach(tr => frag.appendChild(tr));
+            tableBody.appendChild(frag);
+
+            updateBatchUI();
+        }
+
+        tableBody.addEventListener('change', (e) => {
+            if (e.target.classList.contains('row-checkbox')) {
+                const g = parseInt(e.target.getAttribute('data-global-index'), 10);
+                if (e.target.checked) selectedIndices.add(g);
+                else selectedIndices.delete(g);
+                renderTable();
+            } else if (e.target.classList.contains('cover-file-input')) {
+                const dz = e.target.closest('.drop-zone');
+                if (dz && e.target.files.length) handleNewCover(dz.getAttribute('data-uuid'), e.target.files[0], dz);
+                e.target.value = '';
+            }
+        });
+
+        tableBody.addEventListener('input', (e) => {
+            if (e.target.matches('input[type="text"][data-field-key]')) {
+                const key = e.target.getAttribute('data-field-key');
+                const g = parseInt(e.target.getAttribute('data-global-index'), 10);
+                if (booksData[g]) {
+                    booksData[g][key] = e.target.value;
+                    markDirty();
+                    touchBook(g);
+                    if (/series/i.test(key)) debouncedSeriesRefresh();
+                }
+            }
+        });
+
+        tableBody.addEventListener('click', (e) => {
+            const img = e.target.closest('.preview-cover-img');
+            if (img) {
+                if (img.getAttribute('data-has-cover') === 'true') {
+                    modalImg.src = img.getAttribute('data-cover-url');
+                    modalTitle.innerText = img.getAttribute('data-book-title') || 'Unbekannter Titel';
+                    activeModalUuid = img.getAttribute('data-uuid');
+                    coverModal.classList.remove('hidden');
+                } else {
+                    const tr = img.closest('tr');
+                    const g = parseInt(tr.getAttribute('data-global-index'), 10);
+                    const book = booksData[g];
+                    if (!book) return;
+                    const bTitle = getBookField(book, ['title', 'TITLE', 'name']).value || '';
+                    const bIsbn = getBookField(book, ['isbn', 'ISBN', 'isbn13', 'isbn10']).value || '';
+                    const uuidKey = getBookField(book, ['book_uuid', 'uuid', 'UUID', 'id']).key;
+                    let uuid = book[uuidKey] || '';
+                    if (!uuid && Object.prototype.hasOwnProperty.call(book, uuidKey)) {
+                        uuid = newUuid();
+                        book[uuidKey] = uuid;
+                        markDirty();
+                        img.setAttribute('data-uuid', uuid);
+                    }
+                    openCoverSearchModal(uuid, bTitle || bIsbn);
+                }
+                return;
+            }
+            const detBtn = e.target.closest('.open-details-btn');
+            if (detBtn) {
+                openDetailsModal(parseInt(detBtn.getAttribute('data-global-index'), 10));
+                return;
+            }
+            const dz = e.target.closest('.drop-zone');
+            if (dz) {
+                const fi = dz.querySelector('.cover-file-input');
+                if (fi && e.target !== fi) fi.click();
+            }
+        });
+
+        tableBody.addEventListener('dragover', (e) => {
+            const dz = e.target.closest('.drop-zone');
+            if (dz) { e.preventDefault(); dz.classList.add('bg-blue-100'); }
+        });
+        tableBody.addEventListener('dragleave', (e) => {
+            const dz = e.target.closest('.drop-zone');
+            if (dz) dz.classList.remove('bg-blue-100');
+        });
+        tableBody.addEventListener('drop', (e) => {
+            const dz = e.target.closest('.drop-zone');
+            if (dz) {
+                e.preventDefault();
+                dz.classList.remove('bg-blue-100');
+                if (e.dataTransfer.files.length) handleNewCover(dz.getAttribute('data-uuid'), e.dataTransfer.files[0], dz);
+            }
+        });
+
+        async function handleNewCover(uuid, file, dz) {
+            if (!file || !dz) return;
+            coverOpStart();
+            try {
+                let g = -1;
+                if (uuid) g = booksData.findIndex(b => getBookField(b, ['book_uuid', 'uuid', 'UUID', 'id']).value === uuid);
+                if (g === -1) {
+                    g = parseInt(dz.closest('tr').getAttribute('data-global-index'), 10);
+                    if (!booksData[g]) return;
+                    if (!uuid) {
+                        uuid = newUuid();
+                        const uk = getBookField(booksData[g], ['book_uuid', 'uuid', 'UUID', 'id']).key;
+                        if (Object.prototype.hasOwnProperty.call(booksData[g], uk)) booksData[g][uk] = uuid;
+                        dz.setAttribute('data-uuid', uuid);
+                    }
+                }
+                if (!uuid) return;
+                const filename = await storeCover(uuid, file);
+                if (!filename) {
+                    alert("Ungültige Bilddatei – Cover wurde nicht gespeichert.");
+                    return;
+                }
+                for (const k of Object.keys(thumbnails)) {
+                    if (uuid && k.startsWith(uuid) && k !== uuid) {
+                        if (objectUrls.has(k)) { URL.revokeObjectURL(objectUrls.get(k)); objectUrls.delete(k); }
+                        delete thumbnails[k];
+                        delete thumbnailFilenames[k];
+                    }
+                }
+                if (objectUrls.has(uuid)) { URL.revokeObjectURL(objectUrls.get(uuid)); objectUrls.delete(uuid); }
+                thumbnailFilenames[uuid] = filename;
+                refreshCoverSet();
+                markDirty();
+                touchBook(g);
+                const img = dz.closest('tr').querySelector('.preview-cover-img');
+                if (img) {
+                    const newUrl = getCoverUrl(uuid);
+                    img.src = newUrl;
+                    img.setAttribute('data-cover-url', newUrl);
+                    img.setAttribute('data-has-cover', 'true');
+                    img.setAttribute('data-uuid', uuid);
+                }
+            } catch (err) {
+                console.error(err);
+                alert("Fehler beim Speichern des Covers: " + err.message);
+            } finally {
+                coverOpEnd();
+            }
+        }
+
+        function updateBatchUI() {
+            const count = selectedIndices.size;
+            selectedCountBadge.innerText = `${count} ausgewählt`;
+            applyBatchBtn.disabled = count === 0 || !batchValueInput.value.trim();
+        }
+
+        batchFieldSelect.addEventListener('change', (e) => {
+            if (e.target.value === 'series_details') {
+                batchStartNumWrapper.classList.remove('hidden');
+                batchValueInput.placeholder = "Serientitel (z.B. Gon)...";
+            } else {
+                batchStartNumWrapper.classList.add('hidden');
+                batchValueInput.placeholder = "Neuer Wert...";
+            }
+        });
+
+        selectPageCheckbox.addEventListener('change', (e) => {
+            const filtered = getFilteredIndices();
+            const startIndex = (currentPage - 1) * itemsPerPage;
+            const endIndex = Math.min(startIndex + itemsPerPage, filtered.length);
+            filtered.slice(startIndex, endIndex).forEach(gIdx => {
+                if (e.target.checked) selectedIndices.add(gIdx);
+                else selectedIndices.delete(gIdx);
+            });
+            renderTable();
+        });
+
+        selectAllFilteredBtn.addEventListener('click', () => {
+            getFilteredIndices().forEach(gIdx => selectedIndices.add(gIdx));
+            renderTable();
+        });
+
+        batchValueInput.addEventListener('input', updateBatchUI);
+
+        applyBatchBtn.addEventListener('click', () => {
+            const fieldType = batchFieldSelect.value;
+            const baseVal = batchValueInput.value.trim();
+            if (selectedIndices.size === 0 || !baseVal) return;
+
+            let possibleKeys = [];
+            if (fieldType === 'bookshelf') possibleKeys = ['bookshelf', 'tags', 'TAGS'];
+            else if (fieldType === 'author') possibleKeys = ['author_details', 'author', 'AUTHOR'];
+            else if (fieldType === 'series_details') possibleKeys = ['series_details', 'series', 'SERIES'];
+
+            let currentNum = parseInt(batchStartNumInput.value) || 1;
+
+            selectedIndices.forEach(gIdx => {
+                const book = booksData[gIdx];
+                const targetKey = getBookField(book, possibleKeys).key || possibleKeys[0];
+
+                if (fieldType === 'series_details') {
+                    booksData[gIdx][targetKey] = `${baseVal} (${currentNum})`;
+                    currentNum++;
+                } else {
+                    booksData[gIdx][targetKey] = baseVal;
+                }
+                if (fieldType === 'bookshelf') {
+                    const sidKey = getBookField(book, ['bookshelf_id']).key;
+                    if (Object.prototype.hasOwnProperty.call(book, sidKey)) {
+                        booksData[gIdx][sidKey] = bookshelfIdMap.get(baseVal) || '';
+                    }
+                }
+                touchBook(gIdx);
+            });
+
+            markDirty();
+            alert(`Erfolgreich auf ${selectedIndices.size} Bücher angewendet!`);
+            batchValueInput.value = '';
+            selectedIndices.clear();
+            populateSeriesDropdown();
+            renderTable();
+        });
+
+        // Modals schließen (Button, ESC, Klick auf Hintergrund)
+        function closeAllModals() {
+            coverModal.classList.add('hidden');
+            addBookModal.classList.add('hidden');
+            coverSearchModal.classList.add('hidden');
+            detailsModal.classList.add('hidden');
+        }
+        document.querySelectorAll('.close-modal-btn').forEach(btn => {
+            btn.addEventListener('click', closeAllModals);
+        });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllModals(); });
+        [coverModal, addBookModal, coverSearchModal, detailsModal].forEach(m => {
+            m.addEventListener('click', (e) => { if (e.target === m) closeAllModals(); });
+        });
+
+        // Cover löschen
+        modalDeleteCoverBtn.addEventListener('click', () => {
+            if (activeModalUuid && thumbnails[activeModalUuid]) {
+                if (objectUrls.has(activeModalUuid)) { URL.revokeObjectURL(objectUrls.get(activeModalUuid)); objectUrls.delete(activeModalUuid); }
+                delete thumbnails[activeModalUuid];
+                delete thumbnailFilenames[activeModalUuid];
+                refreshCoverSet();
+                markDirty();
+                const g = booksData.findIndex(b => getBookField(b, ['book_uuid', 'uuid', 'UUID', 'id']).value === activeModalUuid);
+                if (g !== -1) touchBook(g);
+                coverModal.classList.add('hidden');
+                renderTable();
+            }
+        });
+
+        // --- BUCH HINZUFÜGEN & BATCH ISBN ---
+        openAddModalBtn.addEventListener('click', () => {
+            addIsbnInput.value = '';
+            googlePreviewBox.classList.add('hidden');
+            pendingGoogleData = null;
+            batchQueue = [];
+            batchQueuePos = 0;
+            document.getElementById('batch-queue-box').classList.add('hidden');
+            addBookModal.classList.remove('hidden');
+        });
+
+        function cleanIsbn(rawIsbn) {
+            return (rawIsbn || '').replace(/[^0-9X]/gi, '');
+        }
+
+        fetchIsbnBtn.addEventListener('click', async () => {
+            const rawText = addIsbnInput.value.trim();
+            if (!rawText) {
+                alert("Bitte gib mindestens eine ISBN ein.");
+                return;
+            }
+
+            // Aufteilen nach Zeilenumbruch oder Komma
+            const rawList = rawText.split(/[\r\n,]+/).map(s => cleanIsbn(s)).filter(s => s.length >= 9);
+
+            if (rawList.length === 0) {
+                alert("Keine gültigen ISBNs gefunden.");
+                return;
+            }
+
+            // Einzelne ISBN -> Vorschau zeigen
+            if (rawList.length === 1) {
+                await processSingleIsbn(rawList[0]);
+            } else {
+                // Batch: Metadaten laden, dann Review-Queue im Modal
+                if (confirm(`${rawList.length} ISBNs wurden erkannt. Sollen diese jetzt einzeln geprüft und übernommen werden?`)) {
+                    fetchIsbnBtn.disabled = true;
+                    fetchIsbnBtn.innerText = "Lade Metadaten...";
+
+                    const queue = [];
+                    for (let i = 0; i < rawList.length; i++) {
+                        const isbn = rawList[i];
+                        fetchIsbnBtn.innerText = `Lade ${i + 1}/${rawList.length}...`;
+                        const existingIndex = booksData.findIndex(b => cleanIsbn(getBookField(b, ['isbn', 'ISBN']).value) === isbn);
+                        let meta = null;
+                        try { meta = await fetchMetadataMulti(isbn); } catch (e) {}
+                        let coverBlob = null;
+                        if (meta && meta.coverUrl) {
+                            try {
+                                const imgRes = await fetch(meta.coverUrl);
+                                if (imgRes.ok) {
+                                    const b = await imgRes.blob();
+                                    if (b.size > 0) coverBlob = b;
+                                }
+                            } catch (e) {}
+                        }
+                        queue.push({ isbn: isbn, meta: meta || { isbn: isbn }, coverBlob: coverBlob, isDup: existingIndex !== -1 });
+                    }
+
+                    fetchIsbnBtn.disabled = false;
+                    fetchIsbnBtn.innerText = "ISBN(s) verarbeiten";
+                    batchQueue = queue;
+                    batchQueuePos = 0;
+                    batchAddedCount = 0;
+                    renderBatchQueue();
+                }
+            }
+        });
+
+        async function processSingleIsbn(isbn) {
+            const existingBookIndex = booksData.findIndex(b => cleanIsbn(getBookField(b, ['isbn', 'ISBN']).value) === isbn);
+
+            if (existingBookIndex !== -1) {
+                alert("Ein Buch mit dieser ISBN existiert bereits in deiner Bibliothek! Öffne Details...");
+                addBookModal.classList.add('hidden');
+                openDetailsModal(existingBookIndex);
+                return;
+            }
+
+            fetchIsbnBtn.innerText = "Lade...";
+            fetchIsbnBtn.disabled = true;
+
+            try {
+                const meta = await fetchMetadataMulti(isbn);
+
+                if (meta && (meta.title || meta.author || meta.publisher)) {
+                    pendingGoogleData = meta;
+
+                    document.getElementById('google-preview-title').innerText = pendingGoogleData.title;
+                    document.getElementById('google-preview-author').innerText = pendingGoogleData.author;
+                    document.getElementById('google-preview-publisher').innerText = pendingGoogleData.publisher;
+                    document.getElementById('google-preview-source').innerText = pendingGoogleData.sources.join(', ');
+
+                    const pImg = document.getElementById('google-preview-img');
+                    if (pendingGoogleData.coverUrl) {
+                        pImg.src = pendingGoogleData.coverUrl;
+                        pImg.classList.remove('hidden');
+                    } else {
+                        pImg.classList.add('hidden');
+                    }
+
+                    googlePreviewBox.classList.remove('hidden');
+                } else {
+                    alert("Keine Metadaten gefunden (Google Books, DNB SRU, lobid, Open Library). Buch wird leer angelegt.");
+                    await createNewBook({ isbn: isbn });
+                }
+            } catch (err) {
+                console.error(err);
+                alert("Fehler bei der Metadaten-Abfrage. Buch wird leer angelegt.");
+                await createNewBook({ isbn: isbn });
+            } finally {
+                fetchIsbnBtn.innerText = "ISBN(s) verarbeiten";
+                fetchIsbnBtn.disabled = false;
+            }
+        }
+
+        document.getElementById('accept-google-btn').addEventListener('click', async () => {
+            if (pendingGoogleData) {
+                let coverBlob = null;
+                if (pendingGoogleData.coverUrl) {
+                    try {
+                        const imgRes = await fetch(pendingGoogleData.coverUrl);
+                        if (imgRes.ok) {
+                            const b = await imgRes.blob();
+                            if (b.size > 0) coverBlob = b;
+                        }
+                    } catch (e) {}
+                }
+                await createNewBook(pendingGoogleData, coverBlob);
+            }
+        });
+
+        document.getElementById('reject-google-btn').addEventListener('click', async () => {
+            if (pendingGoogleData) await createNewBook({ isbn: pendingGoogleData.isbn });
+        });
+
+        async function createNewBookSilently(data, coverBlob = null) {
+            const uuid = newUuid();
+            let newBook = {};
+            if (csvMeta.originalFields.length > 0) {
+                csvMeta.originalFields.forEach(f => newBook[f] = '');
+            } else {
+                newBook = { book_uuid: '', _id: '', title: '', author_details: '', series_details: '', bookshelf: '', bookshelf_id: '', isbn: '' };
+            }
+
+            const uuidKey = getBookField(newBook, ['book_uuid', 'uuid', 'UUID', 'id']).key || 'book_uuid';
+            const titleKey = getBookField(newBook, ['title', 'TITLE', 'name']).key || 'title';
+            const authorKey = getBookField(newBook, ['author_details', 'author', 'AUTHOR']).key || 'author_details';
+            const isbnKey = getBookField(newBook, ['isbn', 'ISBN']).key || 'isbn';
+
+            newBook[uuidKey] = uuid;
+            newBook[titleKey] = data.title || 'Neues Buch';
+            newBook[authorKey] = data.author || '';
+            newBook[isbnKey] = data.isbn || '';
+
+            setIfOwn(newBook, getBookField(newBook, ['_id', 'id']).key, nextBookId());
+            setIfOwn(newBook, getBookField(newBook, ['publisher', 'PUBLISHER']).key, data.publisher || '');
+            setIfOwn(newBook, getBookField(newBook, ['date_published']).key, normDate(data.publishedDate || data.date_published || ''));
+            setIfOwn(newBook, getBookField(newBook, ['pages']).key, data.pages ? String(data.pages) : '');
+            setIfOwn(newBook, getBookField(newBook, ['language']).key, data.language || '');
+            setIfOwn(newBook, getBookField(newBook, ['list_price']).key, normPrice(data.listPrice || data.list_price || ''));
+            setIfOwn(newBook, getBookField(newBook, ['description', 'DESC', 'desc']).key, data.description || '');
+
+            const def = defaultBookshelf();
+            setIfOwn(newBook, getBookField(newBook, ['bookshelf', 'tags', 'TAGS']).key, def.name);
+            setIfOwn(newBook, getBookField(newBook, ['bookshelf_id']).key, def.id);
+            setIfOwn(newBook, getBookField(newBook, ['rating']).key, '0');
+            setIfOwn(newBook, getBookField(newBook, ['read']).key, '0');
+            setIfOwn(newBook, getBookField(newBook, ['anthology']).key, '0');
+            setIfOwn(newBook, getBookField(newBook, ['signed']).key, '0');
+            const now = nowStamp();
+            setIfOwn(newBook, getBookField(newBook, ['date_added']).key, now);
+            setIfOwn(newBook, getBookField(newBook, ['last_update_date']).key, now);
+
+            booksData.unshift(newBook);
+
+            if (coverBlob) {
+                const filename = await storeCover(uuid, coverBlob);
+                thumbnailFilenames[uuid] = filename;
+                refreshCoverSet();
+            }
+            markDirty();
+        }
+
+        async function createNewBook(data, coverBlob = null) {
+            await createNewBookSilently(data, coverBlob);
+            addBookModal.classList.add('hidden');
+            populateSeriesDropdown();
+            renderTable();
+            openDetailsModal(0);
+        }
+
+        // --- COVER-SEARCH OVERLAY ---
+        function openCoverSearchModal(uuid, initialQuery) {
+            activeCoverSearchUuid = uuid;
+            coverSearchTermInput.value = initialQuery;
+            coverSearchModal.classList.remove('hidden');
+            performCoverSearch(initialQuery);
+        }
+
+        execCoverSearchBtn.addEventListener('click', () => {
+            performCoverSearch(coverSearchTermInput.value.trim());
+        });
+        coverSearchTermInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') performCoverSearch(coverSearchTermInput.value.trim());
+        });
+
+        async function performCoverSearch(query) {
+            if (!query) return;
+            coverSearchResultsContainer.innerHTML = '<p class="text-blue-600 text-center text-sm py-8 font-medium">Durchsuche Datenbanken nach Covern...</p>';
+
+            let results = [];
+
+            // 1. Google Books API
+            try {
+                const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=8`);
+                const data = await res.json();
+                if (data.items) {
+                    data.items.forEach(item => {
+                        if (item.volumeInfo && item.volumeInfo.imageLinks) {
+                            let url = item.volumeInfo.imageLinks.thumbnail || item.volumeInfo.imageLinks.smallThumbnail;
+                            if (url) {
+                                results.push({
+                                    title: item.volumeInfo.title || '',
+                                    url: url.replace('http://', 'https://'),
+                                    source: 'Google Books'
+                                });
+                            }
+                        }
+                    });
+                }
+            } catch (e) {}
+
+            // 2. Open Library API
+            try {
+                const olRes = await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=8`);
+                const olData = await olRes.json();
+                if (olData.docs) {
+                    olData.docs.forEach(doc => {
+                        if (doc.cover_i) {
+                            results.push({
+                                title: doc.title || '',
+                                url: `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg`,
+                                source: 'Open Library'
+                            });
+                        }
+                    });
+                }
+            } catch (e) {}
+
+            coverSearchResultsContainer.innerHTML = '';
+
+            if (results.length === 0) {
+                coverSearchResultsContainer.innerHTML = '<p class="text-gray-500 text-center text-sm py-8">Keine Cover-Bilder gefunden. Versuche einen anderen Suchbegriff.</p>';
+                return;
+            }
+
+            const grid = document.createElement('div');
+            grid.className = 'grid grid-cols-2 sm:grid-cols-4 gap-4';
+
+            results.forEach(res => {
+                const card = document.createElement('div');
+                card.className = 'border rounded-xl p-2 bg-white hover:border-blue-500 hover:shadow-md transition cursor-pointer flex flex-col items-center justify-between text-center space-y-2';
+                card.innerHTML = `
+                    <img src="${res.url}" class="h-36 object-contain rounded shadow border" alt="Cover Vorschau">
+                    <div class="text-[11px] text-gray-600 truncate w-full" title="${escapeHtml(res.title)}">${escapeHtml(res.title)}</div>
+                    <span class="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">${res.source}</span>
+                `;
+
+                card.addEventListener('click', async () => {
+                    card.classList.add('opacity-50');
+                    coverOpStart();
+                    try {
+                        const imgRes = await fetch(res.url);
+                        if (!imgRes.ok) throw new Error('HTTP ' + imgRes.status);
+                        const blob = await imgRes.blob();
+                        if (!blob.size) throw new Error('leere Antwort');
+                        const uuid = activeCoverSearchUuid;
+                        if (uuid) {
+                            const filename = await storeCover(uuid, blob);
+                            if (!filename) throw new Error('kein erkennbares Bild');
+                            for (const k of Object.keys(thumbnails)) {
+                                if (uuid && k.startsWith(uuid) && k !== uuid) {
+                                    if (objectUrls.has(k)) { URL.revokeObjectURL(objectUrls.get(k)); objectUrls.delete(k); }
+                                    delete thumbnails[k];
+                                    delete thumbnailFilenames[k];
+                                }
+                            }
+                            if (objectUrls.has(uuid)) { URL.revokeObjectURL(objectUrls.get(uuid)); objectUrls.delete(uuid); }
+                            thumbnailFilenames[uuid] = filename;
+                            refreshCoverSet();
+                            markDirty();
+                            const g = booksData.findIndex(b => getBookField(b, ['book_uuid', 'uuid', 'UUID', 'id']).value === uuid);
+                            if (g !== -1) touchBook(g);
+                            coverSearchModal.classList.add('hidden');
+                            renderTable();
+                        }
+                    } catch (err) {
+                        alert("Fehler beim Herunterladen des Covers: " + err.message);
+                        card.classList.remove('opacity-50');
+                    } finally {
+                        coverOpEnd();
+                    }
+                });
+
+                grid.appendChild(card);
+            });
+
+            coverSearchResultsContainer.appendChild(grid);
+        }
+
+        // --- DETAILS OVERLAY ---
+        function openDetailsModal(globalIndex) {
+            activeEditBookIndex = globalIndex;
+            const book = booksData[globalIndex];
+            const titleInfo = getBookField(book, ['title', 'TITLE', 'name']);
+            document.getElementById('details-modal-title').innerText = `Bearbeiten: ${titleInfo.value || 'Buch'}`;
+
+            detailsFieldsContainer.innerHTML = '';
+            const fields = csvMeta.originalFields.length ? csvMeta.originalFields : Object.keys(book);
+
+            fields.forEach(field => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'space-y-1';
+
+                const label = document.createElement('label');
+                label.className = 'block text-xs font-semibold text-gray-600 uppercase';
+                label.innerText = field;
+
+                let input;
+                if (/series/i.test(field)) {
+                    input = document.createElement('input');
+                    input.type = 'text';
+                    input.setAttribute('list', 'series-datalist');
+                } else if (/bookshelf/i.test(field) && !/id/i.test(field)) {
+                    input = document.createElement('input');
+                    input.type = 'text';
+                    input.setAttribute('list', 'bookshelf-datalist');
+                } else {
+                    input = document.createElement('textarea');
+                    input.rows = field.toLowerCase().includes('desc') ? 4 : 1;
+                }
+                input.className = 'w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-sans';
+                input.value = book[field] || '';
+                input.setAttribute('data-field', field);
+
+                wrapper.appendChild(label);
+                wrapper.appendChild(input);
+                detailsFieldsContainer.appendChild(wrapper);
+            });
+
+            detailsModal.classList.remove('hidden');
+        }
+
+        saveDetailsBtn.addEventListener('click', () => {
+            if (activeEditBookIndex !== null && booksData[activeEditBookIndex]) {
+                const inputs = detailsFieldsContainer.querySelectorAll('[data-field]');
+                inputs.forEach(input => {
+                    const field = input.getAttribute('data-field');
+                    booksData[activeEditBookIndex][field] = input.value;
+                });
+                touchBook(activeEditBookIndex);
+                markDirty();
+                detailsModal.classList.add('hidden');
+                populateSeriesDropdown();
+                renderTable();
+            }
+        });
+
+        // --- TAR EXPORT (ABSTURZSICHER) ---
+        exportBtn.addEventListener('click', async () => {
+            if (pendingCoverOps > 0) {
+                alert("Cover-Uploads laufen noch – bitte einen Moment warten.");
+                return;
+            }
+            isExporting = true;
+            updateExportBtnState();
+            exportBtn.innerText = "Erstelle Archiv...";
+
+            try {
+                const exportFields = csvMeta.originalFields.length ? csvMeta.originalFields : (booksData[0] ? Object.keys(booksData[0]) : []);
+                const exportData = booksData.map(b => {
+                    const copy = {};
+                    for (const k of Object.keys(b)) {
+                        let v = b[k];
+                        if (typeof v === 'string') {
+                            v = v.replace(/\r\n|\r|\n/g, '\\n');
+                            if (/^(date_published|read_start|read_end)$/i.test(k)) v = normDate(v);
+                            else if (/^(date_added|last_update_date|last_goodreads_sync_date)$/i.test(k)) v = normDateTime(v);
+                            else if (/^list_price$/i.test(k)) v = normPrice(v);
+                        }
+                        copy[k] = v;
+                    }
+                    return copy;
+                });
+                const csvString = Papa.unparse({
+                    fields: exportFields,
+                    data: exportData
+                });
+                const csvBytes = (new TextEncoder()).encode(csvString);
+
+                let chunks = [];
+                chunks.push(createTarHeader("books.csv", csvBytes.length));
+                chunks.push(csvBytes);
+                const csvPadding = 512 - (csvBytes.length % 512);
+                if (csvPadding < 512) chunks.push(new Uint8Array(csvPadding));
+
+                const thumbnailEntries = Object.entries(thumbnails).filter(([uuid, blob]) => blob instanceof Blob);
+
+                for (const [uuid, blob] of thumbnailEntries) {
+                    try {
+                        const arrayBuf = await blob.arrayBuffer().catch(() => null);
+                        if (!arrayBuf || arrayBuf.byteLength === 0) {
+                            console.warn(`Cover für UUID ${uuid} übersprungen (leer/fehlgeschlagen):`, thumbnailFilenames[uuid] || (uuid + '.jpg'));
+                            continue;
+                        }
+
+                        const imgBytes = new Uint8Array(arrayBuf);
+                        const tarFilename = thumbnailFilenames[uuid] || (uuid + '.jpg');
+
+                        chunks.push(createTarHeader(tarFilename, imgBytes.length));
+                        chunks.push(imgBytes);
+
+                        const imgPadding = 512 - (imgBytes.length % 512);
+                        if (imgPadding < 512) chunks.push(new Uint8Array(imgPadding));
+                    } catch (imgErr) {
+                        console.warn(`Cover für UUID ${uuid} übersprungen:`, imgErr);
+                    }
+                }
+
+                chunks.push(new Uint8Array(1024));
+
+                const finalBlob = new Blob(chunks, { type: 'application/x-tar' });
+                const url = URL.createObjectURL(finalBlob);
+
+                const now = new Date();
+                const pad = (n) => String(n).padStart(2, '0');
+                const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `book-catalogue-${timestamp}.bcbk`;
+                document.body.appendChild(a);
+                a.click();
+
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }, 1000);
+
+                isDataDirty = false;
+                isExporting = false;
+                updateExportBtnState();
+                exportBtn.innerText = "Archiv herunterladen";
+            } catch (err) {
+                console.error(err);
+                alert("Fehler beim Erstellen: " + err.message);
+                isExporting = false;
+                updateExportBtnState();
+                exportBtn.innerText = "Archiv herunterladen";
+            }
+        });
+
+        function createTarHeader(filename, size) {
+            const header = new Uint8Array(512);
+            const encoder = new TextEncoder();
+
+            header.set(encoder.encode(filename.slice(0, 100)), 0);
+            header.set(encoder.encode('0000644\0'), 100);
+            header.set(encoder.encode('0000000\0'), 108);
+            header.set(encoder.encode('0000000\0'), 116);
+
+            const sizeOctal = size.toString(8).padStart(11, '0') + '\0';
+            header.set(encoder.encode(sizeOctal), 124);
+
+            const mtimeOctal = Math.floor(Date.now() / 1000).toString(8).padStart(11, '0') + '\0';
+            header.set(encoder.encode(mtimeOctal), 136);
+
+            header[156] = 48;
+            header.set(encoder.encode('ustar\0'), 257);
+            header.set(encoder.encode('00'), 263);
+
+            for (let i = 148; i < 156; i++) header[i] = 32;
+            let checksum = 0;
+            for (let i = 0; i < 512; i++) checksum += header[i];
+            const checkOctal = checksum.toString(8).padStart(6, '0') + '\0 ';
+            header.set(encoder.encode(checkOctal), 148);
+
+            return header;
+        }
+
+        // Steuerung Pagination & Filter
+        function changePage(direction) {
+            currentPage += direction;
+            renderTable();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        prevBtnTop.addEventListener('click', () => changePage(-1));
+        nextBtnTop.addEventListener('click', () => changePage(1));
+        prevBtnBot.addEventListener('click', () => changePage(-1));
+        nextBtnBot.addEventListener('click', () => changePage(1));
+
+        resetFiltersBtn.addEventListener('click', () => {
+            searchInput.value = '';
+            seriesFilterSelect.value = '';
+            tagFilterInput.value = '';
+            noCoverFilterCheckbox.checked = false;
+            currentPage = 1;
+            renderTable();
+        });
+
+        itemsPerPageSelect.addEventListener('change', (e) => { itemsPerPage = parseInt(e.target.value); currentPage = 1; renderTable(); });
+        document.getElementById('sort-select').addEventListener('change', (e) => { sortMode = e.target.value; currentPage = 1; renderTable(); });
+        document.getElementById('series-prev-btn').addEventListener('click', () => stepSeries(-1));
+        document.getElementById('series-next-btn').addEventListener('click', () => stepSeries(1));
+
+        document.getElementById('batch-accept-btn').addEventListener('click', async () => {
+            const item = batchQueue[batchQueuePos];
+            if (!item || item.isDup) return;
+            await createNewBookSilently(item.meta, item.coverBlob);
+            batchAddedCount++;
+            batchQueuePos++;
+            renderBatchQueue();
+        });
+        document.getElementById('batch-edit-btn').addEventListener('click', async () => {
+            const item = batchQueue[batchQueuePos];
+            if (!item || item.isDup) return;
+            await createNewBookSilently(item.meta, item.coverBlob);
+            batchAddedCount++;
+            batchQueuePos++;
+            renderBatchQueue();
+            openDetailsModal(0);
+        });
+        document.getElementById('batch-skip-btn').addEventListener('click', () => {
+            batchQueuePos++;
+            renderBatchQueue();
+        });
+        document.getElementById('batch-accept-all-btn').addEventListener('click', async (e) => {
+            e.target.disabled = true;
+            while (batchQueuePos < batchQueue.length) {
+                const item = batchQueue[batchQueuePos];
+                if (!item.isDup) {
+                    await createNewBookSilently(item.meta, item.coverBlob);
+                    batchAddedCount++;
+                }
+                batchQueuePos++;
+            }
+            renderBatchQueue();
+        });
+        document.getElementById('batch-cancel-btn').addEventListener('click', () => {
+            batchQueue = [];
+            batchQueuePos = 0;
+            document.getElementById('batch-queue-box').classList.add('hidden');
+        });
+        const debouncedFilterRender = debounce(() => { currentPage = 1; renderTable(); }, 250);
+        searchInput.addEventListener('input', debouncedFilterRender);
+        tagFilterInput.addEventListener('input', debouncedFilterRender);
+        seriesFilterSelect.addEventListener('change', () => { currentPage = 1; renderTable(); });
+        noCoverFilterCheckbox.addEventListener('change', () => { currentPage = 1; renderTable(); });
+
+        function escapeHtml(str) { return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+    </script>
+</body>
+</html>
