@@ -49,10 +49,14 @@
 
                         <input type="text" id="search-input" placeholder="Suche (Titel, Autor...)" class="px-3 py-2 border rounded-lg w-full sm:w-48 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
 
-                        <!-- Serien Dropdown Filter -->
-                        <select id="series-filter-select" class="px-3 py-2 border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm max-w-xs">
-                            <option value="">-- Alle Serien --</option>
-                        </select>
+                        <!-- Serien Dropdown Filter + Stepper -->
+                        <div class="flex items-center gap-1">
+                            <button id="series-prev-btn" type="button" aria-label="Vorherige Serie" title="Vorherige Serie" class="px-2 py-2 border rounded-lg bg-white hover:bg-gray-50 text-xs">&#9664;</button>
+                            <select id="series-filter-select" class="px-3 py-2 border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm max-w-xs">
+                                <option value="">-- Alle Serien --</option>
+                            </select>
+                            <button id="series-next-btn" type="button" aria-label="Nächste Serie" title="Nächste Serie" class="px-2 py-2 border rounded-lg bg-white hover:bg-gray-50 text-xs">&#9654;</button>
+                        </div>
 
                         <input type="text" id="tag-filter-input" placeholder="Regal-Filter..." class="px-3 py-2 border rounded-lg w-full sm:w-36 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
 
@@ -73,6 +77,12 @@
                                 <option value="50" selected>50</option>
                                 <option value="100">100</option>
                                 <option value="500">500</option>
+                            </select>
+                            <span class="ml-2">Sortierung:</span>
+                            <select id="sort-select" class="px-2 py-1.5 border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="default" selected>Standard (Serie/Titel)</option>
+                                <option value="newest">Neueste zuerst</option>
+                                <option value="oldest">Älteste zuerst</option>
                             </select>
                         </div>
                     </div>
@@ -205,6 +215,33 @@
                     <button id="accept-google-btn" class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-medium">Google-Daten übernehmen</button>
                 </div>
             </div>
+
+            <!-- Batch Review Queue -->
+            <div id="batch-queue-box" class="hidden border rounded-xl p-4 bg-gray-50 space-y-3 mt-3">
+                <div class="flex justify-between items-center gap-2 flex-wrap">
+                    <h3 class="font-semibold text-sm text-gray-700">Batch-Review (<span id="batch-queue-pos">1</span>/<span id="batch-queue-total">0</span>)</h3>
+                    <div class="flex gap-2">
+                        <button id="batch-accept-all-btn" type="button" class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-medium">Alle hinzufügen</button>
+                        <button id="batch-cancel-btn" type="button" class="px-3 py-1.5 border rounded-lg text-xs hover:bg-gray-200">Abbrechen</button>
+                    </div>
+                </div>
+                <div class="flex gap-4">
+                    <img id="batch-queue-img" src="" class="w-16 h-24 object-cover rounded shadow border hidden" alt="Cover">
+                    <div class="text-xs space-y-1 flex-1">
+                        <p><span class="font-bold">ISBN:</span> <span id="batch-queue-isbn"></span></p>
+                        <p><span class="font-bold">Titel:</span> <span id="batch-queue-title"></span></p>
+                        <p><span class="font-bold">Autor:</span> <span id="batch-queue-author"></span></p>
+                        <p><span class="font-bold">Verlag:</span> <span id="batch-queue-publisher"></span></p>
+                        <p><span class="font-bold">Quellen:</span> <span id="batch-queue-sources"></span></p>
+                        <p id="batch-queue-dup" class="text-red-600 font-medium hidden">Bereits vorhanden (Duplikat)</p>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2 pt-2 border-t">
+                    <button id="batch-skip-btn" type="button" class="px-3 py-1.5 border rounded-lg text-xs hover:bg-gray-200">Überspringen</button>
+                    <button id="batch-edit-btn" type="button" class="px-3 py-1.5 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-xs font-medium">Übernehmen &amp; bearbeiten</button>
+                    <button id="batch-accept-btn" type="button" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium">Übernehmen &amp; weiter</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -248,6 +285,7 @@
     </div>
 
     <datalist id="series-datalist"></datalist>
+    <datalist id="bookshelf-datalist"></datalist>
 
     <script>
         let booksData = [];
@@ -263,6 +301,13 @@
         let coverKeySet = new Set();
         let fieldCache = new WeakMap();
         let bookshelfIdMap = new Map();
+        let pendingCoverOps = 0;
+        let isExporting = false;
+        let sortMode = 'default';
+        let batchQueue = [];
+        let batchQueuePos = 0;
+        let batchAddedCount = 0;
+        let batchQueueImgUrl = null;
 
         let pendingGoogleData = null;
 
@@ -414,13 +459,15 @@
         }
 
         async function storeCover(uuid, file) {
+            if (!file || !file.size) return null;
             const kind = await blobKind(file);
             if (kind === 'jpg') { thumbnails[uuid] = file; return uuid + '.jpg'; }
             try {
                 const jpeg = await toJpegBlob(file);
                 if (jpeg && jpeg.size > 0) { thumbnails[uuid] = jpeg; return uuid + '.jpg'; }
             } catch (e) {}
-            const ext = (file.name && file.name.includes('.')) ? file.name.substring(file.name.lastIndexOf('.')) : '.' + (kind === 'bin' ? 'img' : kind);
+            if (kind === 'bin') return null;
+            const ext = (file.name && file.name.includes('.')) ? file.name.substring(file.name.lastIndexOf('.')) : '.' + kind;
             thumbnails[uuid] = file;
             return uuid + ext;
         }
@@ -463,6 +510,18 @@
                 for (const [id, c] of m) if (c > bc) { bc = c; best = id; }
                 bookshelfIdMap.set(name, best);
             }
+            populateBookshelfDatalist();
+        }
+
+        function populateBookshelfDatalist() {
+            const dl = document.getElementById('bookshelf-datalist');
+            if (!dl) return;
+            dl.innerHTML = '';
+            Array.from(bookshelfIdMap.keys()).sort(collator.compare).forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = n;
+                dl.appendChild(opt);
+            });
         }
 
         function defaultBookshelf() { return { name: 'Default', id: bookshelfIdMap.get('Default') || '1' }; }
@@ -601,8 +660,11 @@
 
         async function fetchMetadataMulti(isbn) {
             const results = await Promise.allSettled([fetchGoogle(isbn), fetchDnb(isbn), fetchLobid(isbn), fetchOpenLibrary(isbn)]);
-            const parts = results.map(r => (r.status === 'fulfilled' ? r.value : null)).filter(Boolean);
+            let parts = results.map(r => (r.status === 'fulfilled' ? r.value : null)).filter(Boolean);
             if (!parts.length) return null;
+            if (/^9783/.test(String(isbn).replace(/[^0-9]/g, ''))) {
+                parts = [...parts.filter(p => p.source !== 'Google Books'), ...parts.filter(p => p.source === 'Google Books')];
+            }
             const pick = (field) => { for (const p of parts) if (p[field]) return p[field]; return ''; };
             return {
                 isbn: isbn,
@@ -617,6 +679,66 @@
                 coverUrl: pick('coverUrl'),
                 sources: parts.map(p => p.source)
             };
+        }
+
+        function coverOpStart() { pendingCoverOps++; updateExportBtnState(); }
+        function coverOpEnd() { pendingCoverOps = Math.max(0, pendingCoverOps - 1); updateExportBtnState(); }
+        function updateExportBtnState() { exportBtn.disabled = isExporting || pendingCoverOps > 0; }
+
+        function stepSeries(direction) {
+            const opts = Array.from(seriesFilterSelect.options).map(o => o.value).filter(v => v !== '');
+            if (!opts.length) return;
+            let i = opts.indexOf(seriesFilterSelect.value);
+            if (i === -1) i = direction > 0 ? 0 : opts.length - 1;
+            else i = (i + direction + opts.length) % opts.length;
+            seriesFilterSelect.value = opts[i];
+            currentPage = 1;
+            renderTable();
+        }
+
+        function compareByDate(a, b) {
+            const da = String(getBookField(a, ['date_added', 'last_update_date']).value || '');
+            const db = String(getBookField(b, ['date_added', 'last_update_date']).value || '');
+            const c = collator.compare(da, db);
+            if (c !== 0) return sortMode === 'newest' ? -c : c;
+            const tA = String(getBookField(a, ['title', 'TITLE', 'name']).value || '');
+            const tB = String(getBookField(b, ['title', 'TITLE', 'name']).value || '');
+            return collator.compare(tA, tB);
+        }
+
+        function renderBatchQueue() {
+            const box = document.getElementById('batch-queue-box');
+            if (batchQueuePos >= batchQueue.length) {
+                box.classList.add('hidden');
+                addBookModal.classList.add('hidden');
+                populateSeriesDropdown();
+                renderTable();
+                if (batchAddedCount > 0) alert(`Batch abgeschlossen: ${batchAddedCount} neue Bücher hinzugefügt.`);
+                return;
+            }
+            const item = batchQueue[batchQueuePos];
+            box.classList.remove('hidden');
+            document.getElementById('batch-queue-pos').innerText = String(batchQueuePos + 1);
+            document.getElementById('batch-queue-total').innerText = String(batchQueue.length);
+            document.getElementById('batch-queue-isbn').innerText = item.isbn;
+            const m = item.meta || {};
+            document.getElementById('batch-queue-title').innerText = m.title || '(ohne Titel)';
+            document.getElementById('batch-queue-author').innerText = m.author || '–';
+            document.getElementById('batch-queue-publisher').innerText = m.publisher || '–';
+            document.getElementById('batch-queue-sources').innerText = (m.sources && m.sources.length) ? m.sources.join(', ') : '–';
+            const img = document.getElementById('batch-queue-img');
+            if (batchQueueImgUrl) { URL.revokeObjectURL(batchQueueImgUrl); batchQueueImgUrl = null; }
+            if (item.coverBlob) {
+                batchQueueImgUrl = URL.createObjectURL(item.coverBlob);
+                img.src = batchQueueImgUrl;
+                img.classList.remove('hidden');
+            } else {
+                img.classList.add('hidden');
+                img.removeAttribute('src');
+            }
+            document.getElementById('batch-queue-dup').classList.toggle('hidden', !item.isDup);
+            document.getElementById('batch-accept-btn').disabled = item.isDup;
+            document.getElementById('batch-edit-btn').disabled = item.isDup;
         }
 
         // Schutz vor versehentlichem Verlassen der Seite (F5 / Tab Schließen)
@@ -779,7 +901,8 @@
                 if (matchesSearch && matchesTag && matchesSeries && matchesNoCover) result.push(i);
             }
 
-            result.sort((a, b) => compareBooks(booksData[a], booksData[b]));
+            if (sortMode === 'default') result.sort((a, b) => compareBooks(booksData[a], booksData[b]));
+            else result.sort((a, b) => compareByDate(booksData[a], booksData[b]));
             return result;
         }
 
@@ -884,7 +1007,7 @@
                             value="${escapeHtml(seriesDetailsInfo.value)}" data-field-key="${seriesDetailsInfo.key}" data-global-index="${globalIndex}" placeholder="Serie (z.B. Gon (1))...">
                     </td>
                     <td class="p-4">
-                        <input type="text" class="text-sm text-gray-700 w-full bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none"
+                        <input type="text" list="bookshelf-datalist" class="text-sm text-gray-700 w-full bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none"
                             value="${escapeHtml(tagInfo.value)}" data-field-key="${tagInfo.key}" data-global-index="${globalIndex}" placeholder="Regale...">
                     </td>
                     <td class="p-4">
@@ -996,38 +1119,51 @@
 
         async function handleNewCover(uuid, file, dz) {
             if (!file || !dz) return;
-            let g = -1;
-            if (uuid) g = booksData.findIndex(b => getBookField(b, ['book_uuid', 'uuid', 'UUID', 'id']).value === uuid);
-            if (g === -1) {
-                g = parseInt(dz.closest('tr').getAttribute('data-global-index'), 10);
-                if (!booksData[g]) return;
-                if (!uuid) {
-                    uuid = newUuid();
-                    const uk = getBookField(booksData[g], ['book_uuid', 'uuid', 'UUID', 'id']).key;
-                    if (Object.prototype.hasOwnProperty.call(booksData[g], uk)) booksData[g][uk] = uuid;
-                    dz.setAttribute('data-uuid', uuid);
+            coverOpStart();
+            try {
+                let g = -1;
+                if (uuid) g = booksData.findIndex(b => getBookField(b, ['book_uuid', 'uuid', 'UUID', 'id']).value === uuid);
+                if (g === -1) {
+                    g = parseInt(dz.closest('tr').getAttribute('data-global-index'), 10);
+                    if (!booksData[g]) return;
+                    if (!uuid) {
+                        uuid = newUuid();
+                        const uk = getBookField(booksData[g], ['book_uuid', 'uuid', 'UUID', 'id']).key;
+                        if (Object.prototype.hasOwnProperty.call(booksData[g], uk)) booksData[g][uk] = uuid;
+                        dz.setAttribute('data-uuid', uuid);
+                    }
                 }
-            }
-            for (const k of Object.keys(thumbnails)) {
-                if (k.startsWith(uuid) && k !== uuid) {
-                    if (objectUrls.has(k)) { URL.revokeObjectURL(objectUrls.get(k)); objectUrls.delete(k); }
-                    delete thumbnails[k];
-                    delete thumbnailFilenames[k];
+                if (!uuid) return;
+                const filename = await storeCover(uuid, file);
+                if (!filename) {
+                    alert("Ungültige Bilddatei – Cover wurde nicht gespeichert.");
+                    return;
                 }
-            }
-            if (objectUrls.has(uuid)) { URL.revokeObjectURL(objectUrls.get(uuid)); objectUrls.delete(uuid); }
-            const filename = await storeCover(uuid, file);
-            thumbnailFilenames[uuid] = filename;
-            refreshCoverSet();
-            markDirty();
-            touchBook(g);
-            const img = dz.closest('tr').querySelector('.preview-cover-img');
-            if (img) {
-                const newUrl = getCoverUrl(uuid);
-                img.src = newUrl;
-                img.setAttribute('data-cover-url', newUrl);
-                img.setAttribute('data-has-cover', 'true');
-                img.setAttribute('data-uuid', uuid);
+                for (const k of Object.keys(thumbnails)) {
+                    if (uuid && k.startsWith(uuid) && k !== uuid) {
+                        if (objectUrls.has(k)) { URL.revokeObjectURL(objectUrls.get(k)); objectUrls.delete(k); }
+                        delete thumbnails[k];
+                        delete thumbnailFilenames[k];
+                    }
+                }
+                if (objectUrls.has(uuid)) { URL.revokeObjectURL(objectUrls.get(uuid)); objectUrls.delete(uuid); }
+                thumbnailFilenames[uuid] = filename;
+                refreshCoverSet();
+                markDirty();
+                touchBook(g);
+                const img = dz.closest('tr').querySelector('.preview-cover-img');
+                if (img) {
+                    const newUrl = getCoverUrl(uuid);
+                    img.src = newUrl;
+                    img.setAttribute('data-cover-url', newUrl);
+                    img.setAttribute('data-has-cover', 'true');
+                    img.setAttribute('data-uuid', uuid);
+                }
+            } catch (err) {
+                console.error(err);
+                alert("Fehler beim Speichern des Covers: " + err.message);
+            } finally {
+                coverOpEnd();
             }
         }
 
@@ -1139,6 +1275,9 @@
             addIsbnInput.value = '';
             googlePreviewBox.classList.add('hidden');
             pendingGoogleData = null;
+            batchQueue = [];
+            batchQueuePos = 0;
+            document.getElementById('batch-queue-box').classList.add('hidden');
             addBookModal.classList.remove('hidden');
         });
 
@@ -1165,42 +1304,37 @@
             if (rawList.length === 1) {
                 await processSingleIsbn(rawList[0]);
             } else {
-                // Batch-Verarbeitung mehrer ISBNs
-                if (confirm(`${rawList.length} ISBNs wurden erkannt. Möchtest du diese jetzt nacheinander stapelverarbeiten?`)) {
+                // Batch: Metadaten laden, dann Review-Queue im Modal
+                if (confirm(`${rawList.length} ISBNs wurden erkannt. Sollen diese jetzt einzeln geprüft und übernommen werden?`)) {
                     fetchIsbnBtn.disabled = true;
-                    fetchIsbnBtn.innerText = "Verarbeite Batch...";
+                    fetchIsbnBtn.innerText = "Lade Metadaten...";
 
-                    let addedCount = 0;
+                    const queue = [];
                     for (let i = 0; i < rawList.length; i++) {
                         const isbn = rawList[i];
-                        fetchIsbnBtn.innerText = `Verarbeite ${i + 1}/${rawList.length}...`;
-                        const existingBook = booksData.find(b => cleanIsbn(getBookField(b, ['isbn', 'ISBN']).value) === isbn);
-                        if (existingBook) continue; // Duplikat überspringen
-
-                        try {
-                            const meta = await fetchMetadataMulti(isbn);
-                            let coverBlob = null;
-                            const gInfo = meta || { isbn: isbn };
-                            if (meta && meta.coverUrl) {
-                                try {
-                                    const imgRes = await fetch(meta.coverUrl);
-                                    coverBlob = await imgRes.blob();
-                                } catch (e) {}
-                            }
-                            await createNewBookSilently(gInfo, coverBlob);
-                            addedCount++;
-                        } catch (e) {
-                            await createNewBookSilently({ isbn: isbn }, null);
-                            addedCount++;
+                        fetchIsbnBtn.innerText = `Lade ${i + 1}/${rawList.length}...`;
+                        const existingIndex = booksData.findIndex(b => cleanIsbn(getBookField(b, ['isbn', 'ISBN']).value) === isbn);
+                        let meta = null;
+                        try { meta = await fetchMetadataMulti(isbn); } catch (e) {}
+                        let coverBlob = null;
+                        if (meta && meta.coverUrl) {
+                            try {
+                                const imgRes = await fetch(meta.coverUrl);
+                                if (imgRes.ok) {
+                                    const b = await imgRes.blob();
+                                    if (b.size > 0) coverBlob = b;
+                                }
+                            } catch (e) {}
                         }
+                        queue.push({ isbn: isbn, meta: meta || { isbn: isbn }, coverBlob: coverBlob, isDup: existingIndex !== -1 });
                     }
 
                     fetchIsbnBtn.disabled = false;
                     fetchIsbnBtn.innerText = "ISBN(s) verarbeiten";
-                    addBookModal.classList.add('hidden');
-                    populateSeriesDropdown();
-                    renderTable();
-                    alert(`Batch-Verarbeitung abgeschlossen! ${addedCount} neue Bücher wurden hinzugefügt.`);
+                    batchQueue = queue;
+                    batchQueuePos = 0;
+                    batchAddedCount = 0;
+                    renderBatchQueue();
                 }
             }
         });
@@ -1258,7 +1392,10 @@
                 if (pendingGoogleData.coverUrl) {
                     try {
                         const imgRes = await fetch(pendingGoogleData.coverUrl);
-                        coverBlob = await imgRes.blob();
+                        if (imgRes.ok) {
+                            const b = await imgRes.blob();
+                            if (b.size > 0) coverBlob = b;
+                        }
                     } catch (e) {}
                 }
                 await createNewBook(pendingGoogleData, coverBlob);
@@ -1404,20 +1541,24 @@
 
                 card.addEventListener('click', async () => {
                     card.classList.add('opacity-50');
+                    coverOpStart();
                     try {
                         const imgRes = await fetch(res.url);
+                        if (!imgRes.ok) throw new Error('HTTP ' + imgRes.status);
                         const blob = await imgRes.blob();
+                        if (!blob.size) throw new Error('leere Antwort');
                         const uuid = activeCoverSearchUuid;
                         if (uuid) {
+                            const filename = await storeCover(uuid, blob);
+                            if (!filename) throw new Error('kein erkennbares Bild');
                             for (const k of Object.keys(thumbnails)) {
-                                if (k.startsWith(uuid) && k !== uuid) {
+                                if (uuid && k.startsWith(uuid) && k !== uuid) {
                                     if (objectUrls.has(k)) { URL.revokeObjectURL(objectUrls.get(k)); objectUrls.delete(k); }
                                     delete thumbnails[k];
                                     delete thumbnailFilenames[k];
                                 }
                             }
                             if (objectUrls.has(uuid)) { URL.revokeObjectURL(objectUrls.get(uuid)); objectUrls.delete(uuid); }
-                            const filename = await storeCover(uuid, blob);
                             thumbnailFilenames[uuid] = filename;
                             refreshCoverSet();
                             markDirty();
@@ -1427,8 +1568,10 @@
                             renderTable();
                         }
                     } catch (err) {
-                        alert("Fehler beim Herunterladen des Covers.");
+                        alert("Fehler beim Herunterladen des Covers: " + err.message);
                         card.classList.remove('opacity-50');
+                    } finally {
+                        coverOpEnd();
                     }
                 });
 
@@ -1461,6 +1604,10 @@
                     input = document.createElement('input');
                     input.type = 'text';
                     input.setAttribute('list', 'series-datalist');
+                } else if (/bookshelf/i.test(field) && !/id/i.test(field)) {
+                    input = document.createElement('input');
+                    input.type = 'text';
+                    input.setAttribute('list', 'bookshelf-datalist');
                 } else {
                     input = document.createElement('textarea');
                     input.rows = field.toLowerCase().includes('desc') ? 4 : 1;
@@ -1494,7 +1641,12 @@
 
         // --- TAR EXPORT (ABSTURZSICHER) ---
         exportBtn.addEventListener('click', async () => {
-            exportBtn.disabled = true;
+            if (pendingCoverOps > 0) {
+                alert("Cover-Uploads laufen noch – bitte einen Moment warten.");
+                return;
+            }
+            isExporting = true;
+            updateExportBtnState();
             exportBtn.innerText = "Erstelle Archiv...";
 
             try {
@@ -1530,7 +1682,10 @@
                 for (const [uuid, blob] of thumbnailEntries) {
                     try {
                         const arrayBuf = await blob.arrayBuffer().catch(() => null);
-                        if (!arrayBuf) continue;
+                        if (!arrayBuf || arrayBuf.byteLength === 0) {
+                            console.warn(`Cover für UUID ${uuid} übersprungen (leer/fehlgeschlagen):`, thumbnailFilenames[uuid] || (uuid + '.jpg'));
+                            continue;
+                        }
 
                         const imgBytes = new Uint8Array(arrayBuf);
                         const tarFilename = thumbnailFilenames[uuid] || (uuid + '.jpg');
@@ -1566,12 +1721,14 @@
                 }, 1000);
 
                 isDataDirty = false;
-                exportBtn.disabled = false;
+                isExporting = false;
+                updateExportBtnState();
                 exportBtn.innerText = "Archiv herunterladen";
             } catch (err) {
                 console.error(err);
                 alert("Fehler beim Erstellen: " + err.message);
-                exportBtn.disabled = false;
+                isExporting = false;
+                updateExportBtnState();
                 exportBtn.innerText = "Archiv herunterladen";
             }
         });
@@ -1626,6 +1783,48 @@
         });
 
         itemsPerPageSelect.addEventListener('change', (e) => { itemsPerPage = parseInt(e.target.value); currentPage = 1; renderTable(); });
+        document.getElementById('sort-select').addEventListener('change', (e) => { sortMode = e.target.value; currentPage = 1; renderTable(); });
+        document.getElementById('series-prev-btn').addEventListener('click', () => stepSeries(-1));
+        document.getElementById('series-next-btn').addEventListener('click', () => stepSeries(1));
+
+        document.getElementById('batch-accept-btn').addEventListener('click', async () => {
+            const item = batchQueue[batchQueuePos];
+            if (!item || item.isDup) return;
+            await createNewBookSilently(item.meta, item.coverBlob);
+            batchAddedCount++;
+            batchQueuePos++;
+            renderBatchQueue();
+        });
+        document.getElementById('batch-edit-btn').addEventListener('click', async () => {
+            const item = batchQueue[batchQueuePos];
+            if (!item || item.isDup) return;
+            await createNewBookSilently(item.meta, item.coverBlob);
+            batchAddedCount++;
+            batchQueuePos++;
+            renderBatchQueue();
+            openDetailsModal(0);
+        });
+        document.getElementById('batch-skip-btn').addEventListener('click', () => {
+            batchQueuePos++;
+            renderBatchQueue();
+        });
+        document.getElementById('batch-accept-all-btn').addEventListener('click', async (e) => {
+            e.target.disabled = true;
+            while (batchQueuePos < batchQueue.length) {
+                const item = batchQueue[batchQueuePos];
+                if (!item.isDup) {
+                    await createNewBookSilently(item.meta, item.coverBlob);
+                    batchAddedCount++;
+                }
+                batchQueuePos++;
+            }
+            renderBatchQueue();
+        });
+        document.getElementById('batch-cancel-btn').addEventListener('click', () => {
+            batchQueue = [];
+            batchQueuePos = 0;
+            document.getElementById('batch-queue-box').classList.add('hidden');
+        });
         const debouncedFilterRender = debounce(() => { currentPage = 1; renderTable(); }, 250);
         searchInput.addEventListener('input', debouncedFilterRender);
         tagFilterInput.addEventListener('input', debouncedFilterRender);
