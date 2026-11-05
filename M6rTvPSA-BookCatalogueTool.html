@@ -197,6 +197,7 @@
                         <p><span class="font-bold">Titel:</span> <span id="google-preview-title"></span></p>
                         <p><span class="font-bold">Autor:</span> <span id="google-preview-author"></span></p>
                         <p><span class="font-bold">Verlag:</span> <span id="google-preview-publisher"></span></p>
+                        <p><span class="font-bold">Quellen:</span> <span id="google-preview-source"></span></p>
                     </div>
                 </div>
                 <div class="flex justify-end gap-2 pt-2 border-t">
@@ -472,6 +473,149 @@
         }
 
         function setIfOwn(obj, key, val) { if (key && Object.prototype.hasOwnProperty.call(obj, key)) obj[key] = val; }
+
+        const DNB_LANG_MAP = { ger: 'de', eng: 'en', fre: 'fr', spa: 'es', ita: 'it', dut: 'nl', por: 'pt', lat: 'la' };
+
+        function xmlUnescape(s) {
+            return String(s || '')
+                .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+                .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+                .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+        }
+
+        async function fetchGoogle(isbn) {
+            const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+            const data = await res.json();
+            if (!data.totalItems || !data.items || !data.items[0].volumeInfo) return null;
+            const info = data.items[0].volumeInfo;
+            let coverUrl = null;
+            if (info.imageLinks) {
+                coverUrl = info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || null;
+                if (coverUrl) coverUrl = coverUrl.replace('http://', 'https://');
+            }
+            const lp = info.saleInfo && info.saleInfo.listPrice && info.saleInfo.listPrice.amount;
+            return {
+                source: 'Google Books',
+                title: info.title || '',
+                author: info.authors ? normAuthor(info.authors) : '',
+                publisher: info.publisher || '',
+                description: info.description || '',
+                publishedDate: info.publishedDate || '',
+                pages: info.pageCount || '',
+                language: info.language || '',
+                listPrice: (lp !== undefined && lp !== null) ? String(lp) : '',
+                coverUrl: coverUrl
+            };
+        }
+
+        async function fetchDnb(isbn) {
+            const url = `https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=${encodeURIComponent('num=' + isbn)}&maximumRecords=1&recordSchema=MARC21-xml`;
+            const res = await fetch(url);
+            const xml = await res.text();
+            const rec = xml.match(/<record[ >][\s\S]*?<\/record>/);
+            if (!rec) return null;
+            const fields = {};
+            const dfRe = /<datafield tag="(\d+)"[^>]*>([\s\S]*?)<\/datafield>/g;
+            let m;
+            while ((m = dfRe.exec(rec[0]))) {
+                if (!fields[m[1]]) fields[m[1]] = [];
+                const sf = {};
+                const sfRe = /<subfield code="([^"]+)"[^>]*>([\s\S]*?)<\/subfield>/g;
+                let sm;
+                while ((sm = sfRe.exec(m[2]))) sf[sm[1]] = xmlUnescape(sm[2]);
+                fields[m[1]].push(sf);
+            }
+            const sf = (tag, code) => { for (const f of (fields[tag] || [])) if (f[code]) return f[code]; return ''; };
+            const sfAll = (tag, code) => { const out = []; for (const f of (fields[tag] || [])) if (f[code]) out.push(f[code]); return out; };
+            const titleA = sf('245', 'a'), titleB = sf('245', 'b');
+            let title = titleA;
+            if (titleB) title = titleA ? `${titleA} : ${titleB}` : titleB;
+            const authors = [...sfAll('100', 'a'), ...sfAll('700', 'a')].map(a => a.replace(/[,.\s]+$/, ''));
+            const pub = (sf('264', 'b') || sf('260', 'b')).replace(/[,;:]\s*$/, '').trim();
+            const ym = (sf('264', 'c') || sf('260', 'c')).match(/\d{4}/);
+            const pm = sf('300', 'a').match(/\d+/);
+            let lang = sf('041', 'a');
+            lang = DNB_LANG_MAP[lang] || lang;
+            if (!title && !authors.length) return null;
+            return {
+                source: 'DNB SRU',
+                title: title,
+                author: normAuthor(authors),
+                publisher: pub,
+                description: sf('520', 'a'),
+                publishedDate: ym ? ym[0] : '',
+                pages: pm ? pm[0] : '',
+                language: lang,
+                listPrice: '',
+                coverUrl: null
+            };
+        }
+
+        async function fetchLobid(isbn) {
+            const res = await fetch(`https://lobid.org/resources/search?q=${encodeURIComponent('isbn:' + isbn)}&format=json`);
+            const data = await res.json();
+            const docs = data.member || data.docs || (Array.isArray(data) ? data : []);
+            const doc = docs[0];
+            if (!doc) return null;
+            const label = v => Array.isArray(v) ? (v[0] && v[0].label ? v[0].label : v[0]) || '' : (v && v.label ? v.label : v) || '';
+            const pubs = Array.isArray(doc.publication) ? doc.publication : (doc.publication ? [doc.publication] : []);
+            const pub = pubs[0] || {};
+            const authors = (doc.contribution || []).map(c => (c.agent && c.agent.label) || c.label || '').filter(Boolean);
+            const ym = String(pub.published || doc.datePublished || '').match(/\d{4}/);
+            return {
+                source: 'lobid',
+                title: doc.title || '',
+                author: normAuthor(authors),
+                publisher: typeof pub.publisher === 'string' ? pub.publisher : label(pub.publisher),
+                description: typeof doc.description === 'string' ? doc.description : label(doc.description),
+                publishedDate: ym ? ym[0] : '',
+                pages: doc.numberOfPages ? String(doc.numberOfPages) : '',
+                language: label(doc.language),
+                listPrice: '',
+                coverUrl: null
+            };
+        }
+
+        async function fetchOpenLibrary(isbn) {
+            const res = await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent('isbn:' + isbn)}&limit=5`);
+            const data = await res.json();
+            const doc = (data.docs || [])[0];
+            if (!doc) return null;
+            let lang = Array.isArray(doc.language) ? doc.language[0] : doc.language;
+            lang = DNB_LANG_MAP[lang] || lang || '';
+            return {
+                source: 'Open Library',
+                title: doc.title || '',
+                author: doc.author_name ? normAuthor(doc.author_name) : '',
+                publisher: Array.isArray(doc.publisher) ? (doc.publisher[0] || '') : (doc.publisher || ''),
+                description: '',
+                publishedDate: doc.first_publish_year ? String(doc.first_publish_year) : '',
+                pages: doc.number_of_pages_median ? String(doc.number_of_pages_median) : '',
+                language: lang,
+                listPrice: '',
+                coverUrl: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg` : null
+            };
+        }
+
+        async function fetchMetadataMulti(isbn) {
+            const results = await Promise.allSettled([fetchGoogle(isbn), fetchDnb(isbn), fetchLobid(isbn), fetchOpenLibrary(isbn)]);
+            const parts = results.map(r => (r.status === 'fulfilled' ? r.value : null)).filter(Boolean);
+            if (!parts.length) return null;
+            const pick = (field) => { for (const p of parts) if (p[field]) return p[field]; return ''; };
+            return {
+                isbn: isbn,
+                title: pick('title'),
+                author: pick('author'),
+                publisher: pick('publisher'),
+                description: pick('description'),
+                publishedDate: pick('publishedDate'),
+                pages: pick('pages'),
+                language: pick('language'),
+                listPrice: pick('listPrice'),
+                coverUrl: pick('coverUrl'),
+                sources: parts.map(p => p.source)
+            };
+        }
 
         // Schutz vor versehentlichem Verlassen der Seite (F5 / Tab Schließen)
         window.addEventListener('beforeunload', (e) => {
@@ -1020,31 +1164,14 @@ function populateSeriesDropdown() {
                         if (existingBook) continue; // Duplikat überspringen
 
                         try {
-                            const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
-                            const data = await res.json();
+                            const meta = await fetchMetadataMulti(isbn);
                             let coverBlob = null;
-                            let gInfo = { isbn: isbn };
-
-                            if (data.totalItems > 0 && data.items[0].volumeInfo) {
-                                const info = data.items[0].volumeInfo;
-                                gInfo.title = info.title || '';
-                                gInfo.author = info.authors ? normAuthor(info.authors) : '';
-                                gInfo.publisher = info.publisher || '';
-                                gInfo.publishedDate = info.publishedDate || '';
-                                gInfo.pages = info.pageCount || '';
-                                gInfo.language = info.language || '';
-                                const lp = info.saleInfo && info.saleInfo.listPrice && info.saleInfo.listPrice.amount;
-                                gInfo.listPrice = (lp !== undefined && lp !== null) ? String(lp) : '';
-                                gInfo.description = info.description || '';
-
-                                let coverUrl = info.imageLinks ? (info.imageLinks.thumbnail || info.imageLinks.smallThumbnail) : null;
-                                if (coverUrl) {
-                                    coverUrl = coverUrl.replace('http://', 'https://');
-                                    try {
-                                        const imgRes = await fetch(coverUrl);
-                                        coverBlob = await imgRes.blob();
-                                    } catch (e) {}
-                                }
+                            const gInfo = meta || { isbn: isbn };
+                            if (meta && meta.coverUrl) {
+                                try {
+                                    const imgRes = await fetch(meta.coverUrl);
+                                    coverBlob = await imgRes.blob();
+                                } catch (e) {}
                             }
                             await createNewBookSilently(gInfo, coverBlob);
                             addedCount++;
@@ -1078,38 +1205,19 @@ function populateSeriesDropdown() {
             fetchIsbnBtn.disabled = true;
 
             try {
-                const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
-                const data = await res.json();
+                const meta = await fetchMetadataMulti(isbn);
 
-                if (data.totalItems > 0 && data.items[0].volumeInfo) {
-                    const info = data.items[0].volumeInfo;
-
-                    let coverUrl = null;
-                    if (info.imageLinks) {
-                        coverUrl = info.imageLinks.thumbnail || info.imageLinks.smallThumbnail;
-                        if (coverUrl) coverUrl = coverUrl.replace('http://', 'https://');
-                    }
-
-                    pendingGoogleData = {
-                        isbn: isbn,
-                        title: info.title || '',
-                        author: info.authors ? normAuthor(info.authors) : '',
-                        publisher: info.publisher || '',
-                        description: info.description || '',
-                        publishedDate: info.publishedDate || '',
-                        pages: info.pageCount || '',
-                        language: info.language || '',
-                        listPrice: (info.saleInfo && info.saleInfo.listPrice && info.saleInfo.listPrice.amount != null) ? String(info.saleInfo.listPrice.amount) : '',
-                        coverUrl: coverUrl
-                    };
+                if (meta && (meta.title || meta.author || meta.publisher)) {
+                    pendingGoogleData = meta;
 
                     document.getElementById('google-preview-title').innerText = pendingGoogleData.title;
                     document.getElementById('google-preview-author').innerText = pendingGoogleData.author;
                     document.getElementById('google-preview-publisher').innerText = pendingGoogleData.publisher;
+                    document.getElementById('google-preview-source').innerText = pendingGoogleData.sources.join(', ');
 
                     const pImg = document.getElementById('google-preview-img');
-                    if (coverUrl) {
-                        pImg.src = coverUrl;
+                    if (pendingGoogleData.coverUrl) {
+                        pImg.src = pendingGoogleData.coverUrl;
                         pImg.classList.remove('hidden');
                     } else {
                         pImg.classList.add('hidden');
@@ -1117,12 +1225,12 @@ function populateSeriesDropdown() {
 
                     googlePreviewBox.classList.remove('hidden');
                 } else {
-                    alert("Keine Daten auf Google Books gefunden. Buch wird leer angelegt.");
+                    alert("Keine Metadaten gefunden (Google Books, DNB SRU, lobid, Open Library). Buch wird leer angelegt.");
                     await createNewBook({ isbn: isbn });
                 }
             } catch (err) {
                 console.error(err);
-                alert("Fehler bei der Google Books Abfrage. Buch wird leer angelegt.");
+                alert("Fehler bei der Metadaten-Abfrage. Buch wird leer angelegt.");
                 await createNewBook({ isbn: isbn });
             } finally {
                 fetchIsbnBtn.innerText = "ISBN(s) verarbeiten";
