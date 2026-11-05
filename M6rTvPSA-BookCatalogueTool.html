@@ -247,6 +247,8 @@
         </div>
     </div>
 
+    <datalist id="series-datalist"></datalist>
+
     <script>
         let booksData = [];
         let csvMeta = { meta: null, originalFields: [] };
@@ -720,20 +722,31 @@
             return { key: possibleKeys[0] || 'title', value: '' };
         }
 
-function populateSeriesDropdown() {
+        function getSeriesNames() {
             const seriesSet = new Set();
             booksData.forEach(book => {
                 const sInfo = getBookField(book, ['series_details', 'series', 'SERIES']);
                 if (sInfo.value) {
-                    // Schneidet Bandnummern am Ende wie " (1)" oder " (12)" ab
                     const cleanSeriesName = sInfo.value.replace(/\s*\(\d+\)$/, '').trim();
-                    if (cleanSeriesName) {
-                        seriesSet.add(cleanSeriesName);
-                    }
+                    if (cleanSeriesName) seriesSet.add(cleanSeriesName);
                 }
             });
+            return Array.from(seriesSet).sort(collator.compare);
+        }
 
-            const sortedSeries = Array.from(seriesSet).sort(collator.compare);
+        function populateSeriesDatalist() {
+            const dl = document.getElementById('series-datalist');
+            if (!dl) return;
+            dl.innerHTML = '';
+            getSeriesNames().forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s;
+                dl.appendChild(opt);
+            });
+        }
+
+        function populateSeriesDropdown() {
+            const sortedSeries = getSeriesNames();
             seriesFilterSelect.innerHTML = '<option value="">-- Alle Serien --</option>';
             sortedSeries.forEach(s => {
                 const opt = document.createElement('option');
@@ -741,6 +754,7 @@ function populateSeriesDropdown() {
                 opt.textContent = s;
                 seriesFilterSelect.appendChild(opt);
             });
+            populateSeriesDatalist();
         }
         function getFilteredIndices() {
             const searchTerm = searchInput.value.toLowerCase();
@@ -866,7 +880,7 @@ function populateSeriesDropdown() {
                         </div>
                         <input type="text" class="text-sm text-gray-600 w-full bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none"
                             value="${escapeHtml(authorInfo.value)}" data-field-key="${authorInfo.key}" data-global-index="${globalIndex}" placeholder="Autor...">
-                        <input type="text" class="text-xs text-blue-600 font-medium w-full bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none"
+                        <input type="text" list="series-datalist" class="text-xs text-blue-600 font-medium w-full bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none"
                             value="${escapeHtml(seriesDetailsInfo.value)}" data-field-key="${seriesDetailsInfo.key}" data-global-index="${globalIndex}" placeholder="Serie (z.B. Gon (1))...">
                     </td>
                     <td class="p-4">
@@ -1442,8 +1456,15 @@ function populateSeriesDropdown() {
                 label.className = 'block text-xs font-semibold text-gray-600 uppercase';
                 label.innerText = field;
 
-                const input = document.createElement('textarea');
-                input.rows = field.toLowerCase().includes('desc') ? 4 : 1;
+                let input;
+                if (/series/i.test(field)) {
+                    input = document.createElement('input');
+                    input.type = 'text';
+                    input.setAttribute('list', 'series-datalist');
+                } else {
+                    input = document.createElement('textarea');
+                    input.rows = field.toLowerCase().includes('desc') ? 4 : 1;
+                }
                 input.className = 'w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-sans';
                 input.value = book[field] || '';
                 input.setAttribute('data-field', field);
